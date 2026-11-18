@@ -1105,6 +1105,106 @@ window.__ModuleLoader__.load({
     }
 
     // ---------------------------------------------------------------------
+    // 输入框左侧：本会话的联网开关（即时生效，不需要重启）
+    // ---------------------------------------------------------------------
+
+    const SESSION_WEB_API = '/chat-lite/api/session-web'
+    const webOffKey = (sessionId) => 'chat-lite:web-off:' + sessionId
+
+    function ComposerWebToggle(props) {
+      const currentBinding = useStore(SERVICES.uiSession && SERVICES.uiSession.current)
+      const sessionId =
+        (props && props.sessionId) ||
+        (currentBinding && currentBinding.key !== undefined ? String(currentBinding.key) : undefined)
+      const [enabled, setEnabled] = useState(null)
+      const [busy, setBusy] = useState(false)
+
+      useEffect(() => {
+        if (!sessionId) return () => {}
+        let alive = true
+        const stored = window.localStorage.getItem(webOffKey(sessionId)) === '1'
+        fetch(SESSION_WEB_API + '?sessionId=' + encodeURIComponent(sessionId), {
+          credentials: 'same-origin',
+        })
+          .then((response) => response.json())
+          .then(async (json) => {
+            if (!alive || !json.ok) return
+            // 宿主状态是权威；如果本地记录要求关闭而宿主还开着，重放一次
+            if (json.enabled === false) {
+              setEnabled(false)
+              return
+            }
+            if (stored) {
+              await fetch(SESSION_WEB_API, {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ sessionId, enabled: false }),
+              })
+              if (alive) setEnabled(false)
+              return
+            }
+            setEnabled(true)
+          })
+          .catch(() => {})
+        return () => {
+          alive = false
+        }
+      }, [sessionId])
+
+      const toggle = useCallback(async () => {
+        if (!sessionId) return
+        const next = !(enabled === true)
+        setBusy(true)
+        try {
+          const response = await fetch(SESSION_WEB_API, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ sessionId, enabled: next }),
+          })
+          const json = await response.json()
+          if (!json.ok) throw new Error(json.error || 'HTTP ' + response.status)
+          setEnabled(next)
+          window.localStorage.setItem(webOffKey(sessionId), next ? '0' : '1')
+        } catch (error) {
+          console.warn('[chat-lite] 切换联网失败', error)
+        } finally {
+          setBusy(false)
+        }
+      }, [sessionId, enabled])
+
+      if (!sessionId) return null
+      const on = enabled === true
+      return h(
+        'button',
+        {
+          type: 'button',
+          onClick: toggle,
+          disabled: busy || enabled === null,
+          title: on
+            ? t('本会话允许联网搜索，点击关闭', 'Web search on for this session; click to turn off')
+            : t('本会话禁止联网搜索，点击开启', 'Web search off for this session; click to turn on'),
+          style: {
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 5,
+            height: 28,
+            padding: '0 10px',
+            borderRadius: 14,
+            fontSize: 12,
+            cursor: busy ? 'default' : 'pointer',
+            border: '1px solid ' + (on ? 'var(--dsw-alias-brand-primary)' : 'var(--dsw-alias-border-l2)'),
+            background: on ? 'rgba(64,120,255,0.12)' : 'transparent',
+            color: on ? 'var(--dsw-alias-brand-primary)' : 'var(--dsw-alias-label-tertiary)',
+          },
+        },
+        '🌐',
+        enabled === null ? '…' : on ? t('联网', 'Web') : t('联网关', 'Web off'),
+      )
+    }
+
+    // ---------------------------------------------------------------------
     // 设置页：查看 / 编辑闲聊 preset 的系统提示词
     // ---------------------------------------------------------------------
 
@@ -1316,8 +1416,8 @@ window.__ModuleLoader__.load({
             'div',
             { style: styles.note },
             t(
-              '开启后闲聊会话可以使用 web_search（搜索）与 web_fetch（读网页）：遇到需要最新信息的问题它会自己查，其它问题照常直接回答。关闭后只剩纯对话能力。改动需重启 DSH。',
-              'When enabled, chat sessions may use web_search and web_fetch to look things up when a question needs current information. Disabled means conversation only. Restart DSH to apply.',
+              '这里是「全局挂载」：关闭后所有闲聊会话都不再加载联网工具（需重启 DSH）。日常想临时开关，请用输入框左侧的 🌐 按钮——那个即时生效，只影响当前会话。',
+              'This is the global mount switch: turning it off unmounts web tools for every chat session (restart required). For a quick per-session toggle, use the 🌐 button left of the composer — it applies immediately.',
             ),
           ),
           h(
@@ -2266,6 +2366,25 @@ window.__ModuleLoader__.load({
             ),
           'chat-lite: settings section',
         )
+
+        // 输入框左侧的联网开关（会话级，点一下即时生效）
+        ctx.effect(() => {
+          try {
+            return slots.inject('conversation.input.left', () =>
+              slots.register(
+                {
+                  name: 'conversation.input.left',
+                  id: 'chat-lite-web-toggle',
+                  order: 31,
+                },
+                ComposerWebToggle,
+              ),
+            )
+          } catch (error) {
+            console.warn('[chat-lite] 联网开关注册失败', error)
+            return () => {}
+          }
+        }, 'chat-lite: composer web toggle')
 
         ctx.effect(
           () =>

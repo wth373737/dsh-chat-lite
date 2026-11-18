@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url'
 export const name = 'chat-lite'
 
 // 只用 webServer 注册路由；不注入 tools，也不注册任何工具。
-export const inject = ['webServer']
+export const inject = ['webServer', 'agents']
 
 const ROUTE = '/chat-lite/api'
 const PATCH_PATH = fileURLToPath(new URL('./cordis.patch.yml', import.meta.url))
@@ -201,6 +201,65 @@ async function writeWebTool(enabled) {
   return { enabled: enabled === true, path: PATCH_PATH, backup }
 }
 
+// ── 会话级联网开关（即时生效，不需要重启）──────────────────────────────────
+// 工具本身常驻；这里对「单个会话」打限制：
+//   1. tools.restrict({deny})  —— 让模型连工具都看不到（优先）
+//   2. tools.guard(...)        —— 万一看得到，也拦下调用并给出说明
+// 两者都注册在 agent 自己的作用域上，只影响这个会话。
+const WEB_TOOLS = ['web_search', 'web_fetch']
+const sessionWebOff = new Map()
+
+function setSessionWeb(ctx, sessionId, enabled) {
+  if (typeof sessionId !== 'string' || !sessionId) throw new Error('缺少 sessionId')
+  const existing = sessionWebOff.get(sessionId)
+  if (enabled === true) {
+    if (existing) {
+      existing.lift()
+      sessionWebOff.delete(sessionId)
+    }
+    return { enabled: true }
+  }
+  if (existing) return { enabled: false }
+
+  const agent = ctx.agents.get(sessionId)
+  if (!agent || !agent.ctx || !agent.ctx.tools) throw new Error('会话未运行或拿不到工具上下文')
+  const disposers = []
+  try {
+    disposers.push(agent.ctx.tools.restrict({ deny: WEB_TOOLS }))
+  } catch (error) {
+    // 某些组合下 restrict 可能不适用，guard 仍然兜底
+  }
+  try {
+    disposers.push(
+      agent.ctx.tools.guard((execution) => {
+        if (WEB_TOOLS.includes(execution.name)) {
+          return '联网搜索已在输入框关闭。请直接凭已有知识回答；确实需要最新信息时，告诉用户你无法联网。'
+        }
+        return undefined
+      }),
+    )
+  } catch (error) {
+    // 忽略：restrict 已生效即可
+  }
+  sessionWebOff.set(sessionId, {
+    lift: () => {
+      for (const dispose of disposers) {
+        try {
+          dispose()
+        } catch {
+          // 忽略注销失败
+        }
+      }
+    },
+  })
+  return { enabled: false, restricted: disposers.length }
+}
+
+function readSessionWeb(ctx, sessionId) {
+  if (typeof sessionId !== 'string' || !sessionId) throw new Error('缺少 sessionId')
+  return { enabled: !sessionWebOff.has(sessionId) }
+}
+
 /**
  * cordis 插件入口。
  * @param {import('@deepseek-ai/cordis').Context} ctx
@@ -244,6 +303,18 @@ export function apply(ctx, config = {}) {
             sendJson(res, 200, { ok: true, ...value, restartRequired: true })
             return
           }
+          // 会话级开关：即时生效，不需要重启
+          if (req.method === 'GET' && action === 'session-web') {
+            const value = readSessionWeb(ctx, url.searchParams.get('sessionId') || '')
+            sendJson(res, 200, { ok: true, ...value })
+            return
+          }
+          if (req.method === 'POST' && action === 'session-web') {
+            const body = await readJsonBody(req)
+            const value = setSessionWeb(ctx, body.sessionId || '', body.enabled === true)
+            sendJson(res, 200, { ok: true, ...value, restartRequired: false })
+            return
+          }
           sendJson(res, 404, { ok: false, error: 'not found' })
         } catch (error) {
           sendJson(res, 400, { ok: false, error: String((error && error.message) || error) })
@@ -251,4 +322,16 @@ export function apply(ctx, config = {}) {
       },
     }),
   )
+
+  // 插件卸载时把还挂着的会话级限制全部解除，避免残留
+  ctx.effect(() => () => {
+    for (const entry of sessionWebOff.values()) {
+      try {
+        entry.lift()
+      } catch {
+        // 忽略
+      }
+    }
+    sessionWebOff.clear()
+  })
 }
