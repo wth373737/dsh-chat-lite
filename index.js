@@ -10,7 +10,8 @@
 //
 // 写回后需要重启 DSH 才生效（bundle 补丁在启动时合成）。
 
-import { readFile, writeFile, copyFile, mkdir, rename } from 'node:fs/promises'
+import { readFile, writeFile, copyFile, mkdir, rename, readdir, access, stat } from 'node:fs/promises'
+import { zstdDecompressSync } from 'node:zlib'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 
@@ -293,6 +294,68 @@ async function writeAtomic(file, content) {
   await rename(tmp, file)
 }
 
+// ── 磁盘兜底：不经 sessionPersistence，直接解会话日志 ───────────────────────
+// 会话存储在 $DSH_HOME/.dsh/sessions/<工作区编码>/session-<uuid>/session.v4.jsonl.zstd，
+// 多帧 zstd，逐帧解压后拼接即为事件流（每个 JSON 行一个事件）。
+const ZSTD_MAGIC = Buffer.from([0x28, 0xb5, 0x2f, 0xfd])
+
+async function findSessionDir(sessionsRoot, sessionId) {
+  let groups = []
+  try {
+    groups = await readdir(sessionsRoot, { withFileTypes: true })
+  } catch {
+    return null
+  }
+  for (const group of groups) {
+    if (!group.isDirectory()) continue
+    const candidate = path.join(sessionsRoot, group.name, sessionId)
+    try {
+      await access(candidate)
+      return candidate
+    } catch {
+      // 继续找
+    }
+  }
+  return null
+}
+
+export async function readEventsFromFile(file) {
+  const buffer = await readFile(file)
+  const offsets = []
+  let at = buffer.indexOf(ZSTD_MAGIC, 0)
+  while (at >= 0) {
+    offsets.push(at)
+    at = buffer.indexOf(ZSTD_MAGIC, at + 4)
+  }
+  if (offsets.length === 0) throw new Error('日志不是 zstd 帧')
+  const events = []
+  for (let i = 0; i < offsets.length; i++) {
+    const start = offsets[i]
+    const end = i + 1 < offsets.length ? offsets[i + 1] : buffer.length
+    let text = ''
+    try {
+      text = zstdDecompressSync(buffer.subarray(start, end)).toString('utf8')
+    } catch {
+      continue
+    }
+    for (const line of text.split('\n')) {
+      if (!line.trim()) continue
+      try {
+        events.push(JSON.parse(line))
+      } catch {
+        // 跳过坏行
+      }
+    }
+  }
+  return events
+}
+
+async function readSessionEventsFromDisk(sessionsRoot, sessionId) {
+  const dir = await findSessionDir(sessionsRoot, sessionId)
+  if (!dir) throw new Error('找不到会话目录: ' + sessionId)
+  return readEventsFromFile(path.join(dir, 'session.v4.jsonl.zstd'))
+}
+
 const isoOf = (ms) => (ms ? new Date(ms).toISOString() : new Date().toISOString())
 
 /**
@@ -340,10 +403,65 @@ export function eventsToArchive(events) {
   return { title, lines, turns, chars, thinking: thinkingFlag, first, inserted, updated }
 }
 
-async function archiveChatSessions(ctx, chatDir) {
+/** 工作区目录名编码：I:\agent\chat → --I-agent-chat--（分段用 - 连接，两侧各加 --） */
+export function encodeGroup(chatDir) {
+  const parts = String(chatDir)
+    .split(/[:\\/]+/)
+    .filter(Boolean)
+  return '--' + parts.join('-') + '--'
+}
+
+/**
+ * 从 workspace.json 读出「该闲聊工作区当前登记的会话 id」。
+ * 磁盘上可能残留大量弃用目录（早期导入实验留下的），只有登记在册的才算有效会话。
+ * 返回 null 表示读不到（此时不做过滤）。
+ */
+export async function readRegisteredSessions(sessionsRoot, chatDir) {
+  try {
+    const file = path.join(path.dirname(sessionsRoot), 'storages', 'workspace.json')
+    const json = JSON.parse(await readFile(file, 'utf8'))
+    const workspaces = (json.tables && json.tables.workspaces) || {}
+    const wanted = String(chatDir).toLowerCase()
+    for (const key of Object.keys(workspaces)) {
+      const workspace = workspaces[key]
+      if (!workspace || !workspace.path) continue
+      if (String(workspace.path).toLowerCase() !== wanted) continue
+      return new Set((workspace.sessionIds || []).map(String))
+    }
+    return new Set()
+  } catch {
+    return null
+  }
+}
+
+/** 直接列出磁盘上属于该闲聊目录的会话（按 size+mtime 作为 revision）。 */
+export async function listDiskSessions(sessionsRoot, chatDir) {
+  const groupDir = path.join(sessionsRoot, encodeGroup(chatDir))
+  let entries = []
+  try {
+    entries = await readdir(groupDir, { withFileTypes: true })
+  } catch {
+    return { groupDir, sessions: [] }
+  }
+  const sessions = []
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !entry.name.startsWith('session-')) continue
+    const file = path.join(groupDir, entry.name, 'session.v4.jsonl.zstd')
+    try {
+      const info = await stat(file)
+      sessions.push({ id: entry.name, revision: info.size + ':' + Math.round(info.mtimeMs), file })
+    } catch {
+      // 没有日志文件，跳过
+    }
+  }
+  return { groupDir, sessions }
+}
+
+async function archiveChatSessions(ctx, chatDir, sessionsRoot) {
   if (archiveBusy) return { archived: 0, note: 'busy' }
   if (!chatDir) return { archived: 0, note: 'no chatDir' }
   archiveBusy = true
+  let stage = 'begin'
   try {
     const libDir = path.join(chatDir, ARCHIVE_DIR)
     const sessionsDir = path.join(libDir, 'sessions')
@@ -351,9 +469,26 @@ async function archiveChatSessions(ctx, chatDir) {
     await mkdir(sessionsDir, { recursive: true })
     await mkdir(searchDir, { recursive: true })
 
-    const snapshots = await ctx.sessionPersistence.list()
-    const targets = snapshots.filter((snap) => snap.header && snap.header.cwd === chatDir)
+    // 优先直接从磁盘枚举 + 读日志（不依赖宿主服务的行为细节）；
+    // 磁盘上没有该工作区分组时才退回 sessionPersistence。
+    stage = 'enumerate'
+    let targets = []
+    let source = 'disk'
+    if (sessionsRoot) {
+      const listed = await listDiskSessions(sessionsRoot, chatDir)
+      // 只归档「工作区当前登记」的会话：磁盘上可能残留大量弃用目录
+      const registered = await readRegisteredSessions(sessionsRoot, chatDir)
+      targets = registered ? listed.sessions.filter((item) => registered.has(item.id)) : listed.sessions
+    }
+    if (targets.length === 0) {
+      source = 'service'
+      const snapshots = await ctx.sessionPersistence.list()
+      targets = snapshots
+        .filter((snap) => snap.header && snap.header.cwd === chatDir)
+        .map((snap) => ({ id: String(snap.id), revision: String(snap.revision), fromService: true }))
+    }
 
+    stage = 'read-index'
     const indexFile = path.join(libDir, 'index.jsonl')
     const byId = new Map()
     for (const line of await readLines(indexFile)) {
@@ -366,20 +501,25 @@ async function archiveChatSessions(ctx, chatDir) {
     }
 
     let changed = 0
-    for (const snap of targets) {
-      const id = String(snap.id)
-      const revision = String(snap.revision)
-      if (archiveState.get(id) === revision) continue
+    for (const target of targets) {
+      const id = target.id
+      if (archiveState.get(id) === target.revision) continue
 
-      const handle = await ctx.sessionPersistence.open(snap.id, 'read')
+      stage = 'events:' + id
       let events = []
-      try {
-        const result = await handle.read(0, snap.eventCount ?? 100000)
-        events = result.events || []
-      } finally {
-        await handle.close()
+      if (target.fromService) {
+        const handle = await ctx.sessionPersistence.open(id, 'read')
+        try {
+          const result = await handle.read(0, 100000)
+          events = result.events || []
+        } finally {
+          await handle.close()
+        }
+      } else {
+        events = await readEventsFromFile(target.file)
       }
 
+      stage = 'map:' + id
       const mapped = eventsToArchive(events)
       const { lines, title, first, turns, chars, thinkingFlag } = {
         lines: mapped.lines,
@@ -427,8 +567,8 @@ async function archiveChatSessions(ctx, chatDir) {
 
       // 让全文搜索也能覆盖到新会话：重建 chat 区的 live 分块
       const records = []
-      for (const snap of targets) {
-        const id = String(snap.id)
+      for (const target of targets) {
+        const id = target.id
         const lines = await readLines(path.join(sessionsDir, id + '.jsonl'))
         const plain = lines
           .map((line) => {
@@ -449,7 +589,9 @@ async function archiveChatSessions(ctx, chatDir) {
       await writeAtomic(path.join(searchDir, 'live.jsonl'), records.join('\n') + '\n')
     }
 
-    return { archived: changed, total: targets.length }
+    return { archived: changed, total: targets.length, source }
+  } catch (error) {
+    throw new Error('[' + stage + '] ' + String((error && error.message) || error))
   } finally {
     archiveBusy = false
   }
@@ -464,13 +606,17 @@ export function apply(ctx, config = {}) {
   if (config.enabled === false) return
 
   const chatDir = config.chatDir || ''
+  // 会话日志根目录：默认 $DSH_HOME/.dsh/sessions，可用 config.sessionsRoot 覆盖
+  const sessionsRoot =
+    config.sessionsRoot ||
+    (process.env.DSH_HOME ? path.join(process.env.DSH_HOME, '.dsh', 'sessions') : '')
 
   // 定时归档：只扫 chatDir 下的会话，只在 <chatDir>/.chat-lite/ 里写文件。
   // 客户端也会在打开历史页时主动 POST 一次，保证"聊完就能看到"。
   if (chatDir) {
     ctx.effect(() => {
       const timer = setInterval(() => {
-        archiveChatSessions(ctx, chatDir).catch((error) => {
+        archiveChatSessions(ctx, chatDir, sessionsRoot).catch((error) => {
           process.stderr.write('[chat-lite] archive failed: ' + String(error && error.message) + '\n')
         })
       }, 60000)
@@ -527,8 +673,25 @@ export function apply(ctx, config = {}) {
           }
           // 立即归档一次（客户端打开历史页时调用）
           if (req.method === 'POST' && action === 'archive') {
-            const value = await archiveChatSessions(ctx, chatDir)
+            const value = await archiveChatSessions(ctx, chatDir, sessionsRoot)
             sendJson(res, 200, { ok: true, chatDir, ...value })
+            return
+          }
+          // 归档自检（不写文件）：告诉调用方它看到的路径、枚举数、登记数
+          if (req.method === 'GET' && action === 'archive-status') {
+            const listed = sessionsRoot ? await listDiskSessions(sessionsRoot, chatDir) : { groupDir: '', sessions: [] }
+            const registered = sessionsRoot ? await readRegisteredSessions(sessionsRoot, chatDir) : null
+            sendJson(res, 200, {
+              ok: true,
+              chatDir,
+              sessionsRoot,
+              groupDir: listed.groupDir,
+              diskSessions: listed.sessions.length,
+              registered: registered ? registered.size : null,
+              willArchive: registered
+                ? listed.sessions.filter((item) => registered.has(item.id)).length
+                : listed.sessions.length,
+            })
             return
           }
           sendJson(res, 404, { ok: false, error: 'not found' })

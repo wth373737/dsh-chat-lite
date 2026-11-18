@@ -12,6 +12,7 @@ import {
   readWebEnabled,
   setWebEnabled,
   eventsToArchive,
+  encodeGroup,
 } from '../index.js'
 
 const FIXTURE = `# 补丁
@@ -132,4 +133,10 @@ test('eventsToArchive 容忍空输入', () => {
   const mapped = eventsToArchive([])
   assert.deepEqual(mapped.lines, [])
   assert.equal(mapped.turns, 0)
+})
+
+test('encodeGroup 按分段编码工作区目录名', () => {
+  assert.equal(encodeGroup('I:\\agent\\chat'), '--I-agent-chat--')
+  assert.equal(encodeGroup('I:/agent/chat'), '--I-agent-chat--')
+  assert.equal(encodeGroup('/home/u/chat'), '--home-u-chat--')
 })
