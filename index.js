@@ -133,6 +133,74 @@ async function writePersona(prefix) {
   return { path: PATCH_PATH, backup }
 }
 
+// ── 联网搜索开关 ──────────────────────────────────────────────────────────
+// patch 里常驻一行 tool-web（提供 web_search / web_fetch），用 `disabled:` 控制开关。
+// 切换只改一个布尔值，不动插件列表结构。
+const WEB_ROW_ID = 'tool-web'
+
+function findRowRange(lines, id) {
+  const start = lines.findIndex((line) => new RegExp('^\\s*-\\s*id:\\s*' + id + '\\s*$').test(line))
+  if (start < 0) return null
+  const indent = lines[start].match(/^\s*/)[0].length
+  let end = lines.length
+  for (let i = start + 1; i < lines.length; i++) {
+    const line = lines[i]
+    if (line.trim() === '') continue
+    const lineIndent = line.match(/^\s*/)[0].length
+    if (lineIndent < indent) {
+      end = i
+      break
+    }
+    if (lineIndent === indent && /^-\s/.test(line)) {
+      end = i
+      break
+    }
+  }
+  return { start, end, indent }
+}
+
+function readWebEnabled(text) {
+  const lines = text.split(/\r?\n/)
+  const range = findRowRange(lines, WEB_ROW_ID)
+  if (!range) return false
+  for (let i = range.start; i < range.end; i++) {
+    const match = lines[i].match(/^\s*disabled:\s*(true|false)\s*$/)
+    if (match) return match[1] === 'false'
+  }
+  return true // 没有 disabled 字段 = 启用
+}
+
+function setWebEnabled(text, enabled) {
+  const lines = text.split(/\r?\n/)
+  const range = findRowRange(lines, WEB_ROW_ID)
+  if (!range) throw new Error('patch 里找不到 tool-web 行')
+  const value = enabled ? 'false' : 'true'
+  for (let i = range.start; i < range.end; i++) {
+    const match = lines[i].match(/^(\s*)disabled:\s*(true|false)\s*$/)
+    if (match) {
+      lines[i] = match[1] + 'disabled: ' + value
+      return lines.join('\n')
+    }
+  }
+  const indent = ' '.repeat(range.indent + 2)
+  lines.splice(range.start + 1, 0, indent + 'disabled: ' + value)
+  return lines.join('\n')
+}
+
+async function readWebTool() {
+  const text = await readFile(PATCH_PATH, 'utf8')
+  return { enabled: readWebEnabled(text), path: PATCH_PATH }
+}
+
+async function writeWebTool(enabled) {
+  const text = await readFile(PATCH_PATH, 'utf8')
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+  const backup = `${PATCH_PATH}.bak-${stamp}`
+  await copyFile(PATCH_PATH, backup)
+  await writeFile(PATCH_PATH, setWebEnabled(text, enabled === true), 'utf8')
+  return { enabled: enabled === true, path: PATCH_PATH, backup }
+}
+
 /**
  * cordis 插件入口。
  * @param {import('@deepseek-ai/cordis').Context} ctx
@@ -162,6 +230,17 @@ export function apply(ctx, config = {}) {
           if (req.method === 'POST' && action === 'persona') {
             const body = await readJsonBody(req)
             const value = await writePersona(body.prefix)
+            sendJson(res, 200, { ok: true, ...value, restartRequired: true })
+            return
+          }
+          if (req.method === 'GET' && action === 'web') {
+            const value = await readWebTool()
+            sendJson(res, 200, { ok: true, ...value })
+            return
+          }
+          if (req.method === 'POST' && action === 'web') {
+            const body = await readJsonBody(req)
+            const value = await writeWebTool(body.enabled === true)
             sendJson(res, 200, { ok: true, ...value, restartRequired: true })
             return
           }

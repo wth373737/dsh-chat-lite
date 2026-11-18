@@ -1109,6 +1109,7 @@ window.__ModuleLoader__.load({
     // ---------------------------------------------------------------------
 
     const PERSONA_API = '/chat-lite/api/persona'
+    const WEB_API = '/chat-lite/api/web'
 
     function ChatLiteSettings() {
       const [text, setText] = useState('')
@@ -1116,6 +1117,9 @@ window.__ModuleLoader__.load({
       const [filePath, setFilePath] = useState('')
       const [busy, setBusy] = useState(false)
       const [message, setMessage] = useState(null)
+      const [webEnabled, setWebEnabled] = useState(null)
+      const [webBusy, setWebBusy] = useState(false)
+      const [webMessage, setWebMessage] = useState(null)
 
       const load = useCallback(async () => {
         setBusy(true)
@@ -1165,6 +1169,53 @@ window.__ModuleLoader__.load({
       }, [text])
 
       const dirty = text !== saved
+
+      // 联网搜索开关
+      const loadWeb = useCallback(async () => {
+        try {
+          const response = await fetch(WEB_API, { credentials: 'same-origin' })
+          const json = await response.json()
+          if (!json.ok) throw new Error(json.error || 'HTTP ' + response.status)
+          setWebEnabled(json.enabled === true)
+        } catch (error) {
+          setWebMessage({ ok: false, text: String((error && error.message) || error) })
+        }
+      }, [])
+
+      useEffect(() => {
+        loadWeb()
+      }, [loadWeb])
+
+      const toggleWeb = useCallback(
+        async (next) => {
+          setWebBusy(true)
+          setWebMessage(null)
+          try {
+            const response = await fetch(WEB_API, {
+              method: 'POST',
+              credentials: 'same-origin',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ enabled: next === true }),
+            })
+            const json = await response.json()
+            if (!json.ok) throw new Error(json.error || 'HTTP ' + response.status)
+            setWebEnabled(json.enabled === true)
+            setWebMessage({
+              ok: true,
+              text:
+                (json.enabled
+                  ? t('已开启，重启 DSH 后闲聊会话可联网。', 'Enabled; restart DSH to apply.')
+                  : t('已关闭，重启 DSH 后闲聊会话只剩对话能力。', 'Disabled; restart DSH to apply.')) +
+                '\n' + t('备份：', 'backup: ') + (json.backup || '-'),
+            })
+          } catch (error) {
+            setWebMessage({ ok: false, text: String((error && error.message) || error) })
+          } finally {
+            setWebBusy(false)
+          }
+        },
+        [],
+      )
 
       return h(
         'div',
@@ -1254,6 +1305,54 @@ window.__ModuleLoader__.load({
                   }),
                 },
                 message.text,
+              )
+            : null,
+        ),
+        h(
+          'div',
+          { style: styles.card },
+          h('div', { style: styles.cardTitle }, t('联网搜索', 'Web search')),
+          h(
+            'div',
+            { style: styles.note },
+            t(
+              '开启后闲聊会话可以使用 web_search（搜索）与 web_fetch（读网页）：遇到需要最新信息的问题它会自己查，其它问题照常直接回答。关闭后只剩纯对话能力。改动需重启 DSH。',
+              'When enabled, chat sessions may use web_search and web_fetch to look things up when a question needs current information. Disabled means conversation only. Restart DSH to apply.',
+            ),
+          ),
+          h(
+            'div',
+            { style: Object.assign({}, styles.bar, { marginTop: 10 }) },
+            h(
+              'button',
+              {
+                type: 'button',
+                style: webEnabled ? styles.buttonPrimary : styles.buttonSmall,
+                onClick: () => toggleWeb(!webEnabled),
+                disabled: webBusy || webEnabled === null,
+              },
+              webEnabled === null
+                ? t('读取中…', 'Loading…')
+                : webBusy
+                  ? t('保存中…', 'Saving…')
+                  : webEnabled
+                    ? t('已开启 · 点击关闭', 'Enabled · click to disable')
+                    : t('已关闭 · 点击开启', 'Disabled · click to enable'),
+            ),
+          ),
+          webMessage
+            ? h(
+                'div',
+                {
+                  style: Object.assign({}, styles.mono, {
+                    marginTop: 8,
+                    whiteSpace: 'pre-wrap',
+                    color: webMessage.ok
+                      ? 'var(--dsw-alias-state-success-primary, #2e7d32)'
+                      : 'var(--dsw-alias-state-error-primary, #b3261e)',
+                  }),
+                },
+                webMessage.text,
               )
             : null,
         ),
