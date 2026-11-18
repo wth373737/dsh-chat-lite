@@ -1,20 +1,25 @@
 {
   "name": "@local/dsh-chat-lite",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "private": true,
   "type": "module",
-  "description": "闲聊区：手机友好的日常聊天面板 + 自管历史库（年月分组/全文搜索/附件图片）+ 闲聊专用 preset（中文思维链、零工具）。",
+  "description": "闲聊区：手机友好的日常聊天面板 + 自管历史库（年月分组/全文搜索/附件图片）+ 闲聊专用 preset（中文思维链、可开关联网）。",
   "keywords": ["dsh", "cordis-plugin", "chat", "deepseek-harness"],
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/wth373737/dsh-chat-lite.git"
   },
+  "scripts": {
+    "import": "node tools/build-history.mjs",
+    "check": "node --check index.js && node --check client.js && node --check tools/build-history.mjs"
+  },
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
     "./icon": "./icon.svg",
-    "./locale/*.json": "./locale/*.json"
+    "./locale/*.json": "./locale/*.json",
+    "./tools/build-history.mjs": "./tools/build-history.mjs"
   },
   "files": [
     "index.js",
@@ -22,6 +27,7 @@
     "cordis.patch.yml",
     "icon.svg",
     "locale/*.json",
+    "tools/build-history.mjs",
     "README.md",
     "LICENSE"
   ],

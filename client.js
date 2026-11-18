@@ -1087,10 +1087,20 @@ window.__ModuleLoader__.load({
       if (!totalChunks) totalChunks = 200
 
       const matches = []
+      const snippets = new Map()
       let scanned = 0
       let readError = ''
+
+      const takeSnippet = (id, source, at) => {
+        if (snippets.has(id)) return
+        const start = Math.max(0, at - 40)
+        const end = Math.min(source.length, at + needle.length + 80)
+        const body = source.slice(start, end).replace(/\s+/g, ' ').trim()
+        snippets.set(id, (start > 0 ? '…' : '') + body + (end < source.length ? '…' : ''))
+      }
+
       for (let index = 0; index < totalChunks; index++) {
-        if (token !== deepSearchToken) return { matches, scanned, total: totalChunks, cancelled: true, readError }
+        if (token !== deepSearchToken) return { matches, snippets, scanned, total: totalChunks, cancelled: true, readError }
         const name = 'c' + String(index).padStart(4, '0') + '.jsonl'
         let value
         try {
@@ -1104,7 +1114,12 @@ window.__ModuleLoader__.load({
           if (!line.trim()) continue
           try {
             const row = JSON.parse(line)
-            if (String(row.t || '').toLowerCase().includes(needle)) matches.push(row.id)
+            const source = String(row.t || '')
+            const at = source.toLowerCase().indexOf(needle)
+            if (at >= 0) {
+              takeSnippet(row.id, source, at)
+              if (!matches.includes(row.id)) matches.push(row.id)
+            }
           } catch {
             readError = 'chunk ' + index + ': bad line'
           }
@@ -1126,8 +1141,11 @@ window.__ModuleLoader__.load({
             if (!line.trim()) continue
             try {
               const row = JSON.parse(line)
-              if (String(row.t || '').toLowerCase().includes(needle) && !matches.includes(row.id)) {
-                matches.unshift(row.id)
+              const source = String(row.t || '')
+              const at = source.toLowerCase().indexOf(needle)
+              if (at >= 0) {
+                takeSnippet(row.id, source, at)
+                if (!matches.includes(row.id)) matches.unshift(row.id)
               }
             } catch {
               // 跳过坏行
@@ -1138,7 +1156,44 @@ window.__ModuleLoader__.load({
         // 还没归档过，忽略
       }
 
-      return { matches, scanned, total: totalChunks, cancelled: false, readError }
+      return { matches, snippets, scanned, total: totalChunks, cancelled: false, readError }
+    }
+
+    /** 把文本里命中查询的部分包成高亮节点（大小写不敏感，最多 50 处）。 */
+    function highlight(text, query) {
+      const source = String(text == null ? '' : text)
+      const needle = String(query || '')
+      if (!needle) return source
+      const lower = source.toLowerCase()
+      const needleLower = needle.toLowerCase()
+      const parts = []
+      let at = 0
+      let guard = 0
+      while (guard++ < 50) {
+        const found = lower.indexOf(needleLower, at)
+        if (found < 0) {
+          parts.push(source.slice(at))
+          break
+        }
+        if (found > at) parts.push(source.slice(at, found))
+        parts.push(
+          h(
+            'mark',
+            {
+              key: 'hl' + found,
+              style: {
+                background: 'rgba(64,120,255,0.26)',
+                color: 'inherit',
+                borderRadius: 3,
+                padding: '0 1px',
+              },
+            },
+            source.slice(found, found + needle.length),
+          ),
+        )
+        at = found + needle.length
+      }
+      return parts
     }
 
     // ---------------------------------------------------------------------
@@ -1643,7 +1698,7 @@ window.__ModuleLoader__.load({
                 ),
               ),
           })
-          setDeep({ ids: new Set(result.matches) })
+          setDeep({ ids: new Set(result.matches), snippets: result.snippets || new Map() })
           setHistoryPage(0)
           setDeepProgress(
             (result.cancelled
@@ -2184,25 +2239,40 @@ window.__ModuleLoader__.load({
                           h(
                             'div',
                             { style: { fontSize: 13, wordBreak: 'break-all' } },
-                            row.title || t('（无标题）', '(untitled)'),
+                            highlight(row.title || t('（无标题）', '(untitled)'), historyQueryText),
                           ),
-                          // 说明「为什么命中」：标题没中、但首句命中时把首句显示出来
-                          historyQueryText &&
-                          !String(row.title || '').toLowerCase().includes(historyQueryText) &&
-                          String(row.first || '').toLowerCase().includes(historyQueryText)
-                            ? h(
+                          // 说明「为什么命中」：优先显示全文搜索抓到的上下文片段
+                          (() => {
+                            const snippet = deep && deep.snippets ? deep.snippets.get(row.id) : null
+                            const snippetStyle = {
+                              fontSize: 12,
+                              color: 'var(--dsw-alias-label-secondary)',
+                              marginTop: 2,
+                              wordBreak: 'break-all',
+                              lineHeight: 1.6,
+                            }
+                            if (snippet) {
+                              return h(
                                 'div',
-                                {
-                                  style: {
-                                    fontSize: 12,
-                                    color: 'var(--dsw-alias-label-secondary)',
-                                    marginTop: 2,
-                                    wordBreak: 'break-all',
-                                  },
-                                },
-                                t('首句命中：', 'first message: ') + String(row.first || '').slice(0, 80),
+                                { style: snippetStyle },
+                                t('命中：', 'match: '),
+                                highlight(snippet, historyQueryText),
                               )
-                            : null,
+                            }
+                            if (
+                              historyQueryText &&
+                              !String(row.title || '').toLowerCase().includes(historyQueryText) &&
+                              String(row.first || '').toLowerCase().includes(historyQueryText)
+                            ) {
+                              return h(
+                                'div',
+                                { style: snippetStyle },
+                                t('首句命中：', 'first message: '),
+                                highlight(String(row.first || '').slice(0, 80), historyQueryText),
+                              )
+                            }
+                            return null
+                          })(),
                           h(
                             'div',
                             { style: Object.assign({}, styles.mono, { color: 'var(--dsw-alias-label-tertiary)' }) },

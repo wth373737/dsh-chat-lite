@@ -49,19 +49,47 @@ dsh plugin --profile desktop add link:<本目录绝对路径>
 
 读取全部走官方的 `workspaceFiles.read(sessionId, path, {offset,limit})` / `readBytes()`，因此需要一个 **cwd = 闲聊目录** 的会话作为读取句柄。
 
+另外还有 `search/live.jsonl`：宿主每次归档时重建，只放**闲聊工作区里真实会话**的全文分块，全文搜索会优先扫它。
+
+## 从 DeepSeek 导出包导入
+
+```bash
+node tools/build-history.mjs --zip <导出包.zip> --out <闲聊目录>/.chat-lite
+```
+
+| 参数 | 说明 |
+|---|---|
+| `--zip` | DeepSeek 导出的 `deepseek_data-*.zip`（含 `chat_sessions/*.json` 与附件） |
+| `--out` | 目标目录，一般是闲聊目录下的 `.chat-lite/` |
+| `--no-files` | 跳过附件（只用正文和搜索索引） |
+| `--limit N` | 只导入前 N 条（调试用） |
+
+脚本零依赖（`node:fs` / `path` / `zlib`）。
+
+## 自动归档
+
+聊过的新会话会自动进入同一个历史库，**不需要手动导入**：
+
+- 宿主每 60 秒扫描一次，只挑 `cwd === chatDir` 的会话（`chatDir` 在 `cordis.patch.yml` 的插件 config 里）
+- 写入 `<chatDir>/.chat-lite/` 下的 `sessions/`、`index.jsonl`、`search/live.jsonl`
+- 按 session revision 去重，没变化的会话不重读
+- 打开历史页时会立即触发一次，所以「聊完刷新就能看到」
+
+> 边界：只读 `sessionPersistence` 里 cwd 等于闲聊目录的会话，只写该目录下的 `.chat-lite/`，不碰工作区其它内容。
+
 ## preset：`chat-zh`
 
 见 `cordis.patch.yml`。要点：
 
 1. **persona 强制中文推理**——思考语言由系统提示词主导，用户消息里的"请用中文思考"基本无效
-2. **零工具**——闲聊区不该拿到 bash / 文件 / 搜索能力
+2. **联网可开关**——`tool-web` 常驻，输入框左侧 🌐 按钮按会话即时禁用（`tools.restrict` + `tools.guard`）；设置页还有全局挂载开关
 3. **带 compaction**——"带全部上文"的前提，长对话靠它兜住上下文
 
 ## 已知限制
 
 - 官方侧栏仍会列出全部会话；隔离只作用于本面板
 - 全文搜索要顺序读约 300 个 0.7MB 的分块，手机上偏慢（已按最近优先排序，常见词前几块就命中）
-- 历史库的导入工具（从 DeepSeek 导出包生成 `.chat-lite/`）暂未包含在本仓库
+- 归档只保存文本与思考，暂不含附件原件（导入包里的附件仍会正常保存）
 
 ## 许可
 
