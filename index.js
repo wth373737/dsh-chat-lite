@@ -477,17 +477,89 @@ export async function listDiskSessions(sessionsRoot, chatDir) {
   return { groupDir, sessions }
 }
 
-async function archiveChatSessions(ctx, chatDir, sessionsRoot) {
+/**
+ * 把 targets 写进历史库。抽出来是为了能离线端到端测试（真的写文件再断言）。
+ * @param {{libDir: string, targets: Array, byId: Map, readEvents: (target: any) => Promise<any[]>, state?: Map}} options
+ */
+export async function writeArchiveFiles({ libDir, targets, byId, readEvents, state = archiveState }) {
+  const sessionsDir = path.join(libDir, 'sessions')
+  const searchDir = path.join(libDir, 'search')
+  await mkdir(sessionsDir, { recursive: true })
+  await mkdir(searchDir, { recursive: true })
+
+  let changed = 0
+  for (const target of targets) {
+    const id = target.id
+    if (state.get(id) === target.revision) continue
+
+    const events = await readEvents(target)
+    const mapped = eventsToArchive(events)
+    const meta = {
+      kind: 'meta',
+      id,
+      title: mapped.title || (mapped.first ? mapped.first.slice(0, 24) : ''),
+      inserted: isoOf(mapped.inserted),
+      updated: isoOf(mapped.updated),
+    }
+    const body = [JSON.stringify(meta), ...mapped.lines].join('\n') + '\n'
+    await writeAtomic(path.join(sessionsDir, id + '.jsonl'), body)
+
+    byId.set(id, {
+      id,
+      title: meta.title,
+      inserted: meta.inserted,
+      updated: meta.updated,
+      current: null,
+      messages: mapped.lines.length,
+      turns: mapped.turns,
+      chars: mapped.chars,
+      thinking: mapped.thinking,
+      files: 0,
+      first: mapped.first,
+    })
+    state.set(id, target.revision)
+    changed++
+  }
+
+  if (changed === 0) return { changed: 0 }
+
+  const rows = [...byId.values()].sort((a, b) =>
+    String(b.updated || '').localeCompare(String(a.updated || '')),
+  )
+  await writeAtomic(path.join(libDir, 'index.jsonl'), rows.map((row) => JSON.stringify(row)).join('\n') + '\n')
+
+  // 让全文搜索也能覆盖到新会话：重建 chat 区的 live 分块
+  const records = []
+  for (const target of targets) {
+    const id = target.id
+    const lines = await readLines(path.join(sessionsDir, id + '.jsonl'))
+    const plain = lines
+      .map((line) => {
+        try {
+          const row = JSON.parse(line)
+          if (row.kind === 'meta') return ''
+          return (row.thinking ? row.thinking + '\n' : '') + (row.text || '')
+        } catch {
+          return ''
+        }
+      })
+      .filter(Boolean)
+      .join('\n')
+    for (let at = 0; at < plain.length; at += 1500) {
+      records.push(JSON.stringify({ id, t: plain.slice(at, at + 2000) }))
+    }
+  }
+  await writeAtomic(path.join(searchDir, 'live.jsonl'), records.join('\n') + '\n')
+  return { changed }
+}
+
+export async function archiveChatSessions(ctx, chatDir, sessionsRoot) {
   if (archiveBusy) return { archived: 0, note: 'busy' }
   if (!chatDir) return { archived: 0, note: 'no chatDir' }
   archiveBusy = true
   let stage = 'begin'
   try {
     const libDir = path.join(chatDir, ARCHIVE_DIR)
-    const sessionsDir = path.join(libDir, 'sessions')
-    const searchDir = path.join(libDir, 'search')
-    await mkdir(sessionsDir, { recursive: true })
-    await mkdir(searchDir, { recursive: true })
 
     // 优先直接从磁盘枚举 + 读日志（不依赖宿主服务的行为细节）；
     // 磁盘上没有该工作区分组时才退回 sessionPersistence。
@@ -513,9 +585,8 @@ async function archiveChatSessions(ctx, chatDir, sessionsRoot) {
     }
 
     stage = 'read-index'
-    const indexFile = path.join(libDir, 'index.jsonl')
     const byId = new Map()
-    for (const line of await readLines(indexFile)) {
+    for (const line of await readLines(path.join(libDir, 'index.jsonl'))) {
       try {
         const row = JSON.parse(line)
         if (row && row.id) byId.set(row.id, row)
@@ -524,96 +595,20 @@ async function archiveChatSessions(ctx, chatDir, sessionsRoot) {
       }
     }
 
-    let changed = 0
-    for (const target of targets) {
-      const id = target.id
-      if (archiveState.get(id) === target.revision) continue
-
-      stage = 'events:' + id
-      let events = []
-      if (target.fromService) {
-        const handle = await ctx.sessionPersistence.open(id, 'read')
-        try {
-          const result = await handle.read(0, 100000)
-          events = result.events || []
-        } finally {
-          await handle.close()
-        }
-      } else {
-        events = await readEventsFromFile(target.file)
+    stage = 'write'
+    const readEvents = async (target) => {
+      if (!target.fromService) return readEventsFromFile(target.file)
+      const handle = await ctx.sessionPersistence.open(target.id, 'read')
+      try {
+        const result = await handle.read(0, 100000)
+        return result.events || []
+      } finally {
+        await handle.close()
       }
-
-      stage = 'map:' + id
-      const mapped = eventsToArchive(events)
-      const { lines, title, first, turns, chars, thinkingFlag } = {
-        lines: mapped.lines,
-        title: mapped.title,
-        first: mapped.first,
-        turns: mapped.turns,
-        chars: mapped.chars,
-        thinkingFlag: mapped.thinking,
-      }
-      const inserted = mapped.inserted
-      const updated = mapped.updated
-
-      const meta = {
-        kind: 'meta',
-        id,
-        title: title || (first ? first.slice(0, 24) : ''),
-        inserted: isoOf(inserted),
-        updated: isoOf(updated),
-      }
-      const body = [JSON.stringify(meta), ...lines].join('\n') + '\n'
-      await writeAtomic(path.join(sessionsDir, id + '.jsonl'), body)
-
-      byId.set(id, {
-        id,
-        title: meta.title,
-        inserted: meta.inserted,
-        updated: meta.updated,
-        current: null,
-        messages: lines.length,
-        turns,
-        chars,
-        thinking: thinkingFlag,
-        files: 0,
-        first,
-      })
-      archiveState.set(id, revision)
-      changed++
     }
 
-    if (changed > 0) {
-      const rows = [...byId.values()].sort((a, b) =>
-        String(b.updated || '').localeCompare(String(a.updated || '')),
-      )
-      await writeAtomic(indexFile, rows.map((row) => JSON.stringify(row)).join('\n') + '\n')
-
-      // 让全文搜索也能覆盖到新会话：重建 chat 区的 live 分块
-      const records = []
-      for (const target of targets) {
-        const id = target.id
-        const lines = await readLines(path.join(sessionsDir, id + '.jsonl'))
-        const plain = lines
-          .map((line) => {
-            try {
-              const row = JSON.parse(line)
-              if (row.kind === 'meta') return ''
-              return (row.thinking ? row.thinking + '\n' : '') + (row.text || '')
-            } catch {
-              return ''
-            }
-          })
-          .filter(Boolean)
-          .join('\n')
-        for (let at = 0; at < plain.length; at += 1500) {
-          records.push(JSON.stringify({ id, t: plain.slice(at, at + 2000) }))
-        }
-      }
-      await writeAtomic(path.join(searchDir, 'live.jsonl'), records.join('\n') + '\n')
-    }
-
-    return { archived: changed, total: targets.length, source }
+    const result = await writeArchiveFiles({ libDir, targets, byId, readEvents })
+    return { archived: result.changed, total: targets.length, source }
   } catch (error) {
     throw new Error('[' + stage + '] ' + String((error && error.message) || error))
   } finally {

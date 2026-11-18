@@ -5,6 +5,10 @@
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { mkdtemp, mkdir, writeFile, readFile } from 'node:fs/promises'
+import { zstdCompressSync } from 'node:zlib'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
 
 import {
   extractPrefix,
@@ -14,6 +18,8 @@ import {
   eventsToArchive,
   encodeGroup,
   resolveSessionsRoot,
+  writeArchiveFiles,
+  readEventsFromFile,
 } from '../index.js'
 
 const FIXTURE = `# 补丁
@@ -146,4 +152,76 @@ test('resolveSessionsRoot 兼容 DSH_HOME 是否已含 .dsh', () => {
   assert.equal(resolveSessionsRoot({ sessionsRoot: 'X:/s' }, {}), 'X:/s')
   // 没有 DSH_HOME 时返回空串（由调用方退回服务路径）
   assert.equal(resolveSessionsRoot({}, {}), '')
+})
+test('writeArchiveFiles 端到端：写会话文件、索引、全文分块，且按 revision 幂等', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'chat-lite-test-'))
+  const sessionDir = path.join(root, 'sessions', '--x--', 'session-abc')
+  await mkdir(sessionDir, { recursive: true })
+
+  const events = [
+    { type: 'session', time: 1000, data: { cwd: root } },
+    { type: 'user/message', time: 1100, data: { content: [{ type: 'text', text: '你好' }] } },
+    {
+      type: 'assistant/message',
+      time: 1200,
+      data: { message: { content: [{ type: 'reasoning', text: '思考' }, { type: 'text', text: '你也好' }] } },
+    },
+    { type: 'session/title', time: 1300, data: { title: '打招呼' } },
+  ]
+  // 两个独立 zstd 帧拼接，模拟真实日志
+  const frame1 = zstdCompressSync(Buffer.from(JSON.stringify(events[0]) + '\n' + JSON.stringify(events[1]) + '\n'))
+  const frame2 = zstdCompressSync(Buffer.from(JSON.stringify(events[2]) + '\n' + JSON.stringify(events[3]) + '\n'))
+  const logFile = path.join(sessionDir, 'session.v4.jsonl.zstd')
+  await writeFile(logFile, Buffer.concat([frame1, frame2]))
+
+  const libDir = path.join(root, '.chat-lite')
+  const byId = new Map()
+  const state = new Map()
+  const targets = [{ id: 'session-abc', revision: 'r1', file: logFile }]
+
+  const first = await writeArchiveFiles({
+    libDir,
+    targets,
+    byId,
+    state,
+    readEvents: (target) => readEventsFromFile(target.file),
+  })
+  assert.equal(first.changed, 1)
+
+  const rows = (await readFile(path.join(libDir, 'sessions', 'session-abc.jsonl'), 'utf8'))
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line))
+  assert.equal(rows.length, 3)
+  assert.equal(rows[0].kind, 'meta')
+  assert.equal(rows[0].title, '打招呼')
+  assert.equal(rows[1].role, 'user')
+  assert.equal(rows[1].text, '你好')
+  assert.equal(rows[2].role, 'assistant')
+  assert.equal(rows[2].thinking, '思考')
+  assert.equal(rows[2].text, '你也好')
+
+  const index = (await readFile(path.join(libDir, 'index.jsonl'), 'utf8'))
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line))
+  assert.equal(index.length, 1)
+  assert.equal(index[0].id, 'session-abc')
+  assert.equal(index[0].turns, 1)
+  assert.equal(index[0].thinking, true)
+
+  const live = (await readFile(path.join(libDir, 'search', 'live.jsonl'), 'utf8'))
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line))
+  assert.ok(live.some((row) => row.id === 'session-abc' && row.t.includes('你也好')))
+
+  const again = await writeArchiveFiles({
+    libDir,
+    targets,
+    byId,
+    state,
+    readEvents: (target) => readEventsFromFile(target.file),
+  })
+  assert.equal(again.changed, 0, '同一 revision 不应重复写')
 })
