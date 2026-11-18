@@ -1570,6 +1570,7 @@ window.__ModuleLoader__.load({
       const [deep, setDeep] = useState(null)
       const [deepBusy, setDeepBusy] = useState(false)
       const [deepProgress, setDeepProgress] = useState('')
+      const [archiveInfo, setArchiveInfo] = useState(null)
       const [doc, setDoc] = useState(null)
       const [docBusy, setDocBusy] = useState(false)
       const [docError, setDocError] = useState(null)
@@ -1642,7 +1643,8 @@ window.__ModuleLoader__.load({
           const sessionId = chatSessionIdForFiles(list, currentId)
           if (!sessionId) throw new Error(t('需要一个闲聊目录下的会话才能读文件', 'Needs a chat-dir session to read files'))
           // 先把闲聊工作区里的新会话归档进历史库，再读索引
-          await requestArchive()
+          const archive = await requestArchive()
+          setArchiveInfo(archive)
           const rows = await readHistoryIndex(sessionId)
           setHistory(rows)
           setHistoryPage(0)
@@ -2209,6 +2211,36 @@ window.__ModuleLoader__.load({
                     historyFiltered.length + ' / ' + history.length + ' · page ' + (historyPageSafe + 1) + '/' + historyPages,
                   ),
                 ),
+                // 归档状态：不再静默失败——宿主没起来或路由缺失时直接说明
+                archiveInfo === null
+                  ? h(
+                      'div',
+                      {
+                        style: Object.assign({}, styles.mono, {
+                          color: 'var(--dsw-alias-state-error-primary, #b3261e)',
+                          marginBottom: 6,
+                        }),
+                      },
+                      t(
+                        '⚠ 自动归档未生效：宿主 /archive 路由无响应（插件宿主半边改过，需要重启 DSH）',
+                        '⚠ Auto-archive unavailable: the host /archive route did not respond (restart DSH)',
+                      ),
+                    )
+                  : archiveInfo.archived > 0
+                    ? h(
+                        'div',
+                        {
+                          style: Object.assign({}, styles.mono, {
+                            color: 'var(--dsw-alias-state-success-primary, #2e7d32)',
+                            marginBottom: 6,
+                          }),
+                        },
+                        t(
+                          '已归档 ' + archiveInfo.archived + ' 条新会话（共扫描 ' + archiveInfo.total + ' 条）',
+                          'Archived ' + archiveInfo.archived + ' session(s) of ' + archiveInfo.total,
+                        ),
+                      )
+                    : null,
                 historyGroups.map((group) =>
                   h(
                     'div',
