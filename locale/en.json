@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Chat Lite",
+    "description": "A phone-friendly daily chat panel: sessions isolated in their own directory, with a self-owned history library (month grouping, full-text search, attachments and images), version switching and \"continue this chat\". Ships a chat-only agent preset (Chinese reasoning, no tools)."
+  }
+}
