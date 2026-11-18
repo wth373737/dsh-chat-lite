@@ -1105,6 +1105,162 @@ window.__ModuleLoader__.load({
     }
 
     // ---------------------------------------------------------------------
+    // 设置页：查看 / 编辑闲聊 preset 的系统提示词
+    // ---------------------------------------------------------------------
+
+    const PERSONA_API = '/chat-lite/api/persona'
+
+    function ChatLiteSettings() {
+      const [text, setText] = useState('')
+      const [saved, setSaved] = useState('')
+      const [filePath, setFilePath] = useState('')
+      const [busy, setBusy] = useState(false)
+      const [message, setMessage] = useState(null)
+
+      const load = useCallback(async () => {
+        setBusy(true)
+        setMessage(null)
+        try {
+          const response = await fetch(PERSONA_API, { credentials: 'same-origin' })
+          const json = await response.json()
+          if (!json.ok) throw new Error(json.error || 'HTTP ' + response.status)
+          setText(json.prefix || '')
+          setSaved(json.prefix || '')
+          setFilePath(json.path || '')
+        } catch (error) {
+          setMessage({ ok: false, text: String((error && error.message) || error) })
+        } finally {
+          setBusy(false)
+        }
+      }, [])
+
+      useEffect(() => {
+        load()
+      }, [load])
+
+      const save = useCallback(async () => {
+        setBusy(true)
+        setMessage(null)
+        try {
+          const response = await fetch(PERSONA_API, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ prefix: text }),
+          })
+          const json = await response.json()
+          if (!json.ok) throw new Error(json.error || 'HTTP ' + response.status)
+          setSaved(text)
+          setMessage({
+            ok: true,
+            text:
+              t('已保存，重启 DSH 后生效。', 'Saved; restart DSH to apply.') +
+              '\n' + t('备份：', 'backup: ') + (json.backup || '-'),
+          })
+        } catch (error) {
+          setMessage({ ok: false, text: String((error && error.message) || error) })
+        } finally {
+          setBusy(false)
+        }
+      }, [text])
+
+      const dirty = text !== saved
+
+      return h(
+        'div',
+        { style: styles.page },
+        h('div', { style: styles.h1 }, t('闲聊区', 'Chat Lite')),
+        h(
+          'div',
+          { style: styles.sub },
+          t(
+            '闲聊会话使用 preset「chat-zh」。下面是它的系统提示词（persona 前缀）——它决定回答风格，也决定内部思考用哪种语言。',
+            'Chat sessions use the "chat-zh" preset. Below is its system prompt (persona prefix); it drives both style and the language of internal reasoning.',
+          ),
+        ),
+        h(
+          'div',
+          { style: styles.card },
+          h('div', { style: styles.cardTitle }, t('系统提示词', 'System prompt')),
+          h(
+            'div',
+            { style: styles.note },
+            t(
+              '保存会写入插件包的 cordis.patch.yml（自动备份一份），需要重启 DSH 才生效。改动只影响之后新建的闲聊会话，已经开着的会话仍用旧提示词。',
+              'Saving writes the package cordis.patch.yml (with an automatic backup) and needs a DSH restart. It only affects chats created afterwards.',
+            ),
+          ),
+          h('textarea', {
+            value: text,
+            onChange: (event) => setText(event.target.value),
+            spellCheck: false,
+            rows: 24,
+            style: {
+              width: '100%',
+              boxSizing: 'border-box',
+              marginTop: 10,
+              padding: '12px 14px',
+              borderRadius: 10,
+              border: '1px solid var(--dsw-alias-border-l2)',
+              background: 'var(--dsw-alias-surface-l1, transparent)',
+              color: 'var(--dsw-alias-label-primary)',
+              fontFamily: 'ui-monospace, SFMono-Regular, Consolas, monospace',
+              fontSize: 12.5,
+              lineHeight: 1.7,
+              resize: 'vertical',
+            },
+          }),
+          h(
+            'div',
+            { style: Object.assign({}, styles.bar, { marginTop: 10 }) },
+            h(
+              'button',
+              { type: 'button', style: styles.buttonPrimary, onClick: save, disabled: busy || !dirty },
+              busy ? t('保存中…', 'Saving…') : t('保存', 'Save'),
+            ),
+            h(
+              'button',
+              { type: 'button', style: styles.buttonSmall, onClick: () => setText(saved), disabled: busy || !dirty },
+              t('还原改动', 'Revert'),
+            ),
+            h(
+              'button',
+              { type: 'button', style: styles.buttonSmall, onClick: load, disabled: busy },
+              t('重新载入', 'Reload'),
+            ),
+            h(
+              'span',
+              { style: { fontSize: 12, color: 'var(--dsw-alias-label-tertiary)' } },
+              dirty ? t('有未保存改动', 'unsaved changes') : t('已同步', 'in sync'),
+            ),
+          ),
+          filePath
+            ? h(
+                'div',
+                { style: Object.assign({}, styles.mono, { color: 'var(--dsw-alias-label-tertiary)', marginTop: 8 }) },
+                filePath,
+              )
+            : null,
+          message
+            ? h(
+                'div',
+                {
+                  style: Object.assign({}, styles.mono, {
+                    marginTop: 8,
+                    whiteSpace: 'pre-wrap',
+                    color: message.ok
+                      ? 'var(--dsw-alias-state-success-primary, #2e7d32)'
+                      : 'var(--dsw-alias-state-error-primary, #b3261e)',
+                  }),
+                },
+                message.text,
+              )
+            : null,
+        ),
+      )
+    }
+
+    // ---------------------------------------------------------------------
     // 闲聊面板
     // ---------------------------------------------------------------------
 
@@ -1994,6 +2150,22 @@ window.__ModuleLoader__.load({
               ),
             ),
           'chat-lite: sidebar entry',
+        )
+
+        ctx.effect(
+          () =>
+            slots.inject('settings.section', () =>
+              slots.register(
+                {
+                  name: 'settings.section',
+                  id: 'chat-lite-settings',
+                  order: 70,
+                  label: () => t('闲聊区', 'Chat Lite'),
+                },
+                ChatLiteSettings,
+              ),
+            ),
+          'chat-lite: settings section',
         )
 
         ctx.effect(
