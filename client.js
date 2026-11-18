@@ -582,6 +582,20 @@ window.__ModuleLoader__.load({
     const HISTORY_DIR = '.chat-lite'
     const HISTORY_PAGE = 50
 
+    /** 让宿主立刻把闲聊工作区里的会话归档一次（只写 <chatDir>/.chat-lite/）。 */
+    async function requestArchive() {
+      try {
+        const response = await fetch('/chat-lite/api/archive', {
+          method: 'POST',
+          credentials: 'same-origin',
+        })
+        const json = await response.json()
+        return json && json.ok ? json : null
+      } catch {
+        return null
+      }
+    }
+
     /** 找一个属于闲聊目录的会话 id —— workspaceFiles 是会话作用域的，必须借它读文件。 */
     function chatSessionIdForFiles(list, currentId) {
       const rows = (list && list.ids ? list.ids : []).map((id) => list.byId[id]).filter(Boolean)
@@ -1101,6 +1115,29 @@ window.__ModuleLoader__.load({
         }
         if (options && options.maxMatches && matches.length >= options.maxMatches) break
       }
+
+      // 闲聊工作区里新归档的会话放在 live.jsonl（宿主每次归档时重建），优先扫它
+      try {
+        const live = unwrapRemote(
+          await api.read(sessionId, HISTORY_DIR + '/search/live.jsonl', { limit: 20000 }),
+        )
+        if (live && typeof live.text === 'string') {
+          for (const line of live.text.split('\n')) {
+            if (!line.trim()) continue
+            try {
+              const row = JSON.parse(line)
+              if (String(row.t || '').toLowerCase().includes(needle) && !matches.includes(row.id)) {
+                matches.unshift(row.id)
+              }
+            } catch {
+              // 跳过坏行
+            }
+          }
+        }
+      } catch {
+        // 还没归档过，忽略
+      }
+
       return { matches, scanned, total: totalChunks, cancelled: false, readError }
     }
 
@@ -1549,6 +1586,8 @@ window.__ModuleLoader__.load({
         try {
           const sessionId = chatSessionIdForFiles(list, currentId)
           if (!sessionId) throw new Error(t('需要一个闲聊目录下的会话才能读文件', 'Needs a chat-dir session to read files'))
+          // 先把闲聊工作区里的新会话归档进历史库，再读索引
+          await requestArchive()
           const rows = await readHistoryIndex(sessionId)
           setHistory(rows)
           setHistoryPage(0)

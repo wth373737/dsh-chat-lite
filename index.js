@@ -10,13 +10,14 @@
 //
 // 写回后需要重启 DSH 才生效（bundle 补丁在启动时合成）。
 
-import { readFile, writeFile, copyFile } from 'node:fs/promises'
+import { readFile, writeFile, copyFile, mkdir, rename } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
+import path from 'node:path'
 
 export const name = 'chat-lite'
 
 // 只用 webServer 注册路由；不注入 tools，也不注册任何工具。
-export const inject = ['webServer', 'agents']
+export const inject = ['webServer', 'agents', 'sessionPersistence']
 
 const ROUTE = '/chat-lite/api'
 const PATCH_PATH = fileURLToPath(new URL('./cordis.patch.yml', import.meta.url))
@@ -260,6 +261,180 @@ function readSessionWeb(ctx, sessionId) {
   return { enabled: !sessionWebOff.has(sessionId) }
 }
 
+// ── 自动归档：把闲聊工作区里的会话写进 <chatDir>/.chat-lite/ ────────────────
+// 边界（硬约束）：
+//   1. 只处理 header.cwd === chatDir 的会话，别的一律跳过；
+//   2. 只写 chatDir/.chat-lite/ 下的文件，不碰工作区其它内容。
+const ARCHIVE_DIR = '.chat-lite'
+const archiveState = new Map() // sessionId -> revision（本进程内去重）
+let archiveBusy = false
+
+function splitBlocks(blocks) {
+  let text = ''
+  let thinking = ''
+  for (const block of blocks || []) {
+    if (block && block.type === 'text' && typeof block.text === 'string') text += block.text
+    else if (block && block.type === 'reasoning' && typeof block.text === 'string') thinking += block.text
+  }
+  return { text, thinking }
+}
+
+async function readLines(file) {
+  try {
+    return (await readFile(file, 'utf8')).split('\n').filter(Boolean)
+  } catch {
+    return []
+  }
+}
+
+async function writeAtomic(file, content) {
+  const tmp = file + '.tmp'
+  await writeFile(tmp, content, 'utf8')
+  await rename(tmp, file)
+}
+
+const isoOf = (ms) => (ms ? new Date(ms).toISOString() : new Date().toISOString())
+
+async function archiveChatSessions(ctx, chatDir) {
+  if (archiveBusy) return { archived: 0, note: 'busy' }
+  if (!chatDir) return { archived: 0, note: 'no chatDir' }
+  archiveBusy = true
+  try {
+    const libDir = path.join(chatDir, ARCHIVE_DIR)
+    const sessionsDir = path.join(libDir, 'sessions')
+    const searchDir = path.join(libDir, 'search')
+    await mkdir(sessionsDir, { recursive: true })
+    await mkdir(searchDir, { recursive: true })
+
+    const snapshots = await ctx.sessionPersistence.list()
+    const targets = snapshots.filter((snap) => snap.header && snap.header.cwd === chatDir)
+
+    const indexFile = path.join(libDir, 'index.jsonl')
+    const byId = new Map()
+    for (const line of await readLines(indexFile)) {
+      try {
+        const row = JSON.parse(line)
+        if (row && row.id) byId.set(row.id, row)
+      } catch {
+        // 跳过坏行
+      }
+    }
+
+    let changed = 0
+    for (const snap of targets) {
+      const id = String(snap.id)
+      const revision = String(snap.revision)
+      if (archiveState.get(id) === revision) continue
+
+      const handle = await ctx.sessionPersistence.open(snap.id, 'read')
+      let events = []
+      try {
+        const result = await handle.read(0, snap.eventCount ?? 100000)
+        events = result.events || []
+      } finally {
+        await handle.close()
+      }
+
+      const lines = []
+      let title = ''
+      let first = ''
+      let turns = 0
+      let chars = 0
+      let thinkingFlag = false
+      let inserted = 0
+      let updated = 0
+
+      for (const event of events) {
+        if (typeof event.time === 'number') {
+          if (!inserted) inserted = event.time
+          updated = Math.max(updated, event.time)
+        }
+        if (event.type === 'session/title' && event.data && event.data.title) {
+          title = String(event.data.title)
+          continue
+        }
+        if (event.type === 'user/message') {
+          const { text } = splitBlocks(event.data && event.data.content)
+          if (!text.trim()) continue
+          turns++
+          chars += text.length
+          if (!first) first = text.slice(0, 160)
+          lines.push(JSON.stringify({ role: 'user', ts: event.time, text, files: [] }))
+          continue
+        }
+        if (event.type === 'assistant/message') {
+          const blocks = event.data && event.data.message && event.data.message.content
+          const { text, thinking } = splitBlocks(blocks)
+          if (!text.trim() && !thinking.trim()) continue
+          chars += text.length + thinking.length
+          if (thinking.trim()) thinkingFlag = true
+          lines.push(JSON.stringify({ role: 'assistant', ts: event.time, thinking, text, files: [] }))
+        }
+      }
+
+      const meta = {
+        kind: 'meta',
+        id,
+        title: title || (first ? first.slice(0, 24) : ''),
+        inserted: isoOf(inserted),
+        updated: isoOf(updated),
+      }
+      const body = [JSON.stringify(meta), ...lines].join('\n') + '\n'
+      await writeAtomic(path.join(sessionsDir, id + '.jsonl'), body)
+
+      byId.set(id, {
+        id,
+        title: meta.title,
+        inserted: meta.inserted,
+        updated: meta.updated,
+        current: null,
+        messages: lines.length,
+        turns,
+        chars,
+        thinking: thinkingFlag,
+        files: 0,
+        first,
+      })
+      archiveState.set(id, revision)
+      changed++
+    }
+
+    if (changed > 0) {
+      const rows = [...byId.values()].sort((a, b) =>
+        String(b.updated || '').localeCompare(String(a.updated || '')),
+      )
+      await writeAtomic(indexFile, rows.map((row) => JSON.stringify(row)).join('\n') + '\n')
+
+      // 让全文搜索也能覆盖到新会话：重建 chat 区的 live 分块
+      const records = []
+      for (const snap of targets) {
+        const id = String(snap.id)
+        const lines = await readLines(path.join(sessionsDir, id + '.jsonl'))
+        const plain = lines
+          .map((line) => {
+            try {
+              const row = JSON.parse(line)
+              if (row.kind === 'meta') return ''
+              return (row.thinking ? row.thinking + '\n' : '') + (row.text || '')
+            } catch {
+              return ''
+            }
+          })
+          .filter(Boolean)
+          .join('\n')
+        for (let at = 0; at < plain.length; at += 1500) {
+          records.push(JSON.stringify({ id, t: plain.slice(at, at + 2000) }))
+        }
+      }
+      await writeAtomic(path.join(searchDir, 'live.jsonl'), records.join('\n') + '\n')
+    }
+
+    return { archived: changed, total: targets.length }
+  } finally {
+    archiveBusy = false
+  }
+}
+
 /**
  * cordis 插件入口。
  * @param {import('@deepseek-ai/cordis').Context} ctx
@@ -267,6 +442,21 @@ function readSessionWeb(ctx, sessionId) {
  */
 export function apply(ctx, config = {}) {
   if (config.enabled === false) return
+
+  const chatDir = config.chatDir || ''
+
+  // 定时归档：只扫 chatDir 下的会话，只在 <chatDir>/.chat-lite/ 里写文件。
+  // 客户端也会在打开历史页时主动 POST 一次，保证"聊完就能看到"。
+  if (chatDir) {
+    ctx.effect(() => {
+      const timer = setInterval(() => {
+        archiveChatSessions(ctx, chatDir).catch((error) => {
+          process.stderr.write('[chat-lite] archive failed: ' + String(error && error.message) + '\n')
+        })
+      }, 60000)
+      return () => clearInterval(timer)
+    })
+  }
 
   ctx.effect(() =>
     ctx.webServer.register({
@@ -313,6 +503,12 @@ export function apply(ctx, config = {}) {
             const body = await readJsonBody(req)
             const value = setSessionWeb(ctx, body.sessionId || '', body.enabled === true)
             sendJson(res, 200, { ok: true, ...value, restartRequired: false })
+            return
+          }
+          // 立即归档一次（客户端打开历史页时调用）
+          if (req.method === 'POST' && action === 'archive') {
+            const value = await archiveChatSessions(ctx, chatDir)
+            sendJson(res, 200, { ok: true, chatDir, ...value })
             return
           }
           sendJson(res, 404, { ok: false, error: 'not found' })

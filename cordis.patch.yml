@@ -10,6 +10,8 @@
       name: '@local/dsh-chat-lite'
       config:
         enabled: true
+        # 闲聊目录：自动归档只处理 cwd 等于它的会话，且只写它下面的 .chat-lite/
+        chatDir: 'I:\agent\chat'
 
     # 闲聊会话专用 preset：client.js 创建会话时以 agentPreset: 'chat-zh' 指定。
     # 设计要点：
