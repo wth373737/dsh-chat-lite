@@ -12,6 +12,7 @@
 
 import { readFile, writeFile, copyFile, mkdir, rename, readdir, access, stat } from 'node:fs/promises'
 import { zstdDecompressSync } from 'node:zlib'
+import { statSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 
@@ -412,6 +413,25 @@ export function encodeGroup(chatDir) {
 }
 
 /**
+ * 找出会话日志根目录。
+ * DSH_HOME 可能已经是 .dsh（实测就是），也可能不是，两个候选都试一遍。
+ */
+export function resolveSessionsRoot(config, env) {
+  if (config && config.sessionsRoot) return String(config.sessionsRoot)
+  const home = env && env.DSH_HOME ? String(env.DSH_HOME) : ''
+  if (!home) return ''
+  const candidates = [path.join(home, 'sessions'), path.join(home, '.dsh', 'sessions')]
+  for (const candidate of candidates) {
+    try {
+      if (statSync(candidate).isDirectory()) return candidate
+    } catch {
+      // 试下一个
+    }
+  }
+  return candidates[0]
+}
+
+/**
  * 从 workspace.json 读出「该闲聊工作区当前登记的会话 id」。
  * 磁盘上可能残留大量弃用目录（早期导入实验留下的），只有登记在册的才算有效会话。
  * 返回 null 表示读不到（此时不做过滤）。
@@ -485,7 +505,11 @@ async function archiveChatSessions(ctx, chatDir, sessionsRoot) {
       const snapshots = await ctx.sessionPersistence.list()
       targets = snapshots
         .filter((snap) => snap.header && snap.header.cwd === chatDir)
-        .map((snap) => ({ id: String(snap.id), revision: String(snap.revision), fromService: true }))
+        .map((snap) => ({
+          id: String((snap.header && snap.header.id) || snap.id),
+          revision: String(snap.revision),
+          fromService: true,
+        }))
     }
 
     stage = 'read-index'
@@ -607,9 +631,7 @@ export function apply(ctx, config = {}) {
 
   const chatDir = config.chatDir || ''
   // 会话日志根目录：默认 $DSH_HOME/.dsh/sessions，可用 config.sessionsRoot 覆盖
-  const sessionsRoot =
-    config.sessionsRoot ||
-    (process.env.DSH_HOME ? path.join(process.env.DSH_HOME, '.dsh', 'sessions') : '')
+  const sessionsRoot = resolveSessionsRoot(config, process.env)
 
   // 定时归档：只扫 chatDir 下的会话，只在 <chatDir>/.chat-lite/ 里写文件。
   // 客户端也会在打开历史页时主动 POST 一次，保证"聊完就能看到"。

@@ -9,16 +9,21 @@
 import path from 'node:path'
 import process from 'node:process'
 
-import { encodeGroup, listDiskSessions, readEventsFromFile, readRegisteredSessions, eventsToArchive } from '../index.js'
+import {
+  encodeGroup,
+  listDiskSessions,
+  readEventsFromFile,
+  readRegisteredSessions,
+  resolveSessionsRoot,
+  eventsToArchive,
+} from '../index.js'
 
 function arg(name, fallback) {
   const index = process.argv.indexOf('--' + name)
   return index >= 0 && process.argv[index + 1] !== undefined ? process.argv[index + 1] : fallback
 }
 
-const sessionsRoot =
-  arg('sessions') ||
-  (process.env.DSH_HOME ? path.join(process.env.DSH_HOME, '.dsh', 'sessions') : '')
+const sessionsRoot = arg('sessions') || resolveSessionsRoot({}, process.env)
 const chatDir = arg('chat') || 'I:\\agent\\chat'
 
 if (!sessionsRoot) {

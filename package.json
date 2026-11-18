@@ -1,6 +1,6 @@
 {
   "name": "@local/dsh-chat-lite",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "private": true,
   "type": "module",
   "description": "闲聊区：手机友好的日常聊天面板 + 自管历史库（年月分组/全文搜索/附件图片）+ 闲聊专用 preset（中文思维链、可开关联网）。",

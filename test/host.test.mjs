@@ -13,6 +13,7 @@ import {
   setWebEnabled,
   eventsToArchive,
   encodeGroup,
+  resolveSessionsRoot,
 } from '../index.js'
 
 const FIXTURE = `# 补丁
@@ -139,4 +140,10 @@ test('encodeGroup 按分段编码工作区目录名', () => {
   assert.equal(encodeGroup('I:\\agent\\chat'), '--I-agent-chat--')
   assert.equal(encodeGroup('I:/agent/chat'), '--I-agent-chat--')
   assert.equal(encodeGroup('/home/u/chat'), '--home-u-chat--')
+})
+test('resolveSessionsRoot 兼容 DSH_HOME 是否已含 .dsh', () => {
+  // 有 config.sessionsRoot 时直接采用
+  assert.equal(resolveSessionsRoot({ sessionsRoot: 'X:/s' }, {}), 'X:/s')
+  // 没有 DSH_HOME 时返回空串（由调用方退回服务路径）
+  assert.equal(resolveSessionsRoot({}, {}), '')
 })
