@@ -66,7 +66,7 @@ function isLocalRequest(req) {
  * 从 patch YAML 里取出 persona 的 `prefix: |` 块标量。
  * 返回 { prefix, indent } 或 null。indent 是内容行相对文件左侧的缩进宽度。
  */
-function extractPrefix(text) {
+export function extractPrefix(text) {
   const lines = text.split(/\r?\n/)
   const keyIndex = lines.findIndex((line) => /^\s*prefix:\s*\|\s*$/.test(line))
   if (keyIndex < 0) return null
@@ -89,7 +89,7 @@ function extractPrefix(text) {
 }
 
 /** 把 prefix 块替换成新的内容（保持原有缩进）。 */
-function replacePrefix(text, prefix, indent) {
+export function replacePrefix(text, prefix, indent) {
   const lines = text.split(/\r?\n/)
   const keyIndex = lines.findIndex((line) => /^\s*prefix:\s*\|\s*$/.test(line))
   if (keyIndex < 0) throw new Error('patch 里找不到 persona 的 prefix 块')
@@ -139,7 +139,7 @@ async function writePersona(prefix) {
 // 切换只改一个布尔值，不动插件列表结构。
 const WEB_ROW_ID = 'tool-web'
 
-function findRowRange(lines, id) {
+export function findRowRange(lines, id) {
   const start = lines.findIndex((line) => new RegExp('^\\s*-\\s*id:\\s*' + id + '\\s*$').test(line))
   if (start < 0) return null
   const indent = lines[start].match(/^\s*/)[0].length
@@ -160,7 +160,7 @@ function findRowRange(lines, id) {
   return { start, end, indent }
 }
 
-function readWebEnabled(text) {
+export function readWebEnabled(text) {
   const lines = text.split(/\r?\n/)
   const range = findRowRange(lines, WEB_ROW_ID)
   if (!range) return false
@@ -171,7 +171,7 @@ function readWebEnabled(text) {
   return true // 没有 disabled 字段 = 启用
 }
 
-function setWebEnabled(text, enabled) {
+export function setWebEnabled(text, enabled) {
   const lines = text.split(/\r?\n/)
   const range = findRowRange(lines, WEB_ROW_ID)
   if (!range) throw new Error('patch 里找不到 tool-web 行')
@@ -269,7 +269,7 @@ const ARCHIVE_DIR = '.chat-lite'
 const archiveState = new Map() // sessionId -> revision（本进程内去重）
 let archiveBusy = false
 
-function splitBlocks(blocks) {
+export function splitBlocks(blocks) {
   let text = ''
   let thinking = ''
   for (const block of blocks || []) {
@@ -294,6 +294,51 @@ async function writeAtomic(file, content) {
 }
 
 const isoOf = (ms) => (ms ? new Date(ms).toISOString() : new Date().toISOString())
+
+/**
+ * 把会话事件流映射成历史库格式（纯函数，便于测试）。
+ * @returns {{title:string, lines:string[], turns:number, chars:number, thinking:boolean, first:string, inserted:number, updated:number}}
+ */
+export function eventsToArchive(events) {
+  const lines = []
+  let title = ''
+  let first = ''
+  let turns = 0
+  let chars = 0
+  let thinkingFlag = false
+  let inserted = 0
+  let updated = 0
+
+  for (const event of events || []) {
+    if (typeof event.time === 'number') {
+      if (!inserted) inserted = event.time
+      if (event.time > updated) updated = event.time
+    }
+    if (event.type === 'session/title' && event.data && event.data.title) {
+      title = String(event.data.title)
+      continue
+    }
+    if (event.type === 'user/message') {
+      const { text } = splitBlocks(event.data && event.data.content)
+      if (!text.trim()) continue
+      turns++
+      chars += text.length
+      if (!first) first = text.slice(0, 160)
+      lines.push(JSON.stringify({ role: 'user', ts: event.time, text, files: [] }))
+      continue
+    }
+    if (event.type === 'assistant/message') {
+      const blocks = event.data && event.data.message && event.data.message.content
+      const { text, thinking } = splitBlocks(blocks)
+      if (!text.trim() && !thinking.trim()) continue
+      chars += text.length + thinking.length
+      if (thinking.trim()) thinkingFlag = true
+      lines.push(JSON.stringify({ role: 'assistant', ts: event.time, thinking, text, files: [] }))
+    }
+  }
+
+  return { title, lines, turns, chars, thinking: thinkingFlag, first, inserted, updated }
+}
 
 async function archiveChatSessions(ctx, chatDir) {
   if (archiveBusy) return { archived: 0, note: 'busy' }
@@ -335,42 +380,17 @@ async function archiveChatSessions(ctx, chatDir) {
         await handle.close()
       }
 
-      const lines = []
-      let title = ''
-      let first = ''
-      let turns = 0
-      let chars = 0
-      let thinkingFlag = false
-      let inserted = 0
-      let updated = 0
-
-      for (const event of events) {
-        if (typeof event.time === 'number') {
-          if (!inserted) inserted = event.time
-          updated = Math.max(updated, event.time)
-        }
-        if (event.type === 'session/title' && event.data && event.data.title) {
-          title = String(event.data.title)
-          continue
-        }
-        if (event.type === 'user/message') {
-          const { text } = splitBlocks(event.data && event.data.content)
-          if (!text.trim()) continue
-          turns++
-          chars += text.length
-          if (!first) first = text.slice(0, 160)
-          lines.push(JSON.stringify({ role: 'user', ts: event.time, text, files: [] }))
-          continue
-        }
-        if (event.type === 'assistant/message') {
-          const blocks = event.data && event.data.message && event.data.message.content
-          const { text, thinking } = splitBlocks(blocks)
-          if (!text.trim() && !thinking.trim()) continue
-          chars += text.length + thinking.length
-          if (thinking.trim()) thinkingFlag = true
-          lines.push(JSON.stringify({ role: 'assistant', ts: event.time, thinking, text, files: [] }))
-        }
+      const mapped = eventsToArchive(events)
+      const { lines, title, first, turns, chars, thinkingFlag } = {
+        lines: mapped.lines,
+        title: mapped.title,
+        first: mapped.first,
+        turns: mapped.turns,
+        chars: mapped.chars,
+        thinkingFlag: mapped.thinking,
       }
+      const inserted = mapped.inserted
+      const updated = mapped.updated
 
       const meta = {
         kind: 'meta',

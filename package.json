@@ -12,7 +12,8 @@
   },
   "scripts": {
     "import": "node tools/build-history.mjs",
-    "check": "node --check index.js && node --check client.js && node --check tools/build-history.mjs"
+    "check": "node --check index.js && node --check client.js && node --check tools/build-history.mjs",
+    "test": "node --test test/host.test.mjs"
   },
   "exports": {
     ".": "./index.js",

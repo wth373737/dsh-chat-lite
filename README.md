@@ -85,6 +85,21 @@ node tools/build-history.mjs --zip <导出包.zip> --out <闲聊目录>/.chat-li
 2. **联网可开关**——`tool-web` 常驻，输入框左侧 🌐 按钮按会话即时禁用（`tools.restrict` + `tools.guard`）；设置页还有全局挂载开关
 3. **带 compaction**——"带全部上文"的前提，长对话靠它兜住上下文
 
+## 开发与测试
+
+```bash
+npm run check   # 三个文件的语法检查
+npm test        # 宿主半边纯函数测试（node:test，零依赖）
+```
+
+`test/host.test.mjs` 覆盖：
+
+- persona 前缀的提取/回写往返（缩进、空行都不破坏后续 YAML）
+- 联网开关的写入/读取与往返一致性
+- 会话事件流 → 历史库格式的映射（跳过工具事件与空消息、思考提取、字符统计）
+
+GitHub Actions（`.github/workflows/ci.yml`）在每次 push 上跑这两步。
+
 ## 已知限制
 
 - 官方侧栏仍会列出全部会话；隔离只作用于本面板
