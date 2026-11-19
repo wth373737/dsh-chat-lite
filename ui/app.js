@@ -859,11 +859,15 @@ async function sendMessage() {
     state.liveThinking = ''
     renderMessages()
     renderSend()
-    const files = state.pendingFiles.map((item) => ({
-      attachmentId: item.attachmentId,
-      name: item.name,
-      bytes: item.bytes,
-    }))
+    const fileReceipts = []
+    for (const item of state.pendingFiles) {
+      const uploaded = await api('upload-file', {
+        method: 'POST',
+        body: { sessionId: id, name: item.name, data: item.data },
+      })
+      fileReceipts.push({ receiptId: uploaded.receiptId })
+    }
+    const files = fileReceipts
     await api('send', { method: 'POST', body: { sessionId: id, text, images, files } })
     state.pendingFiles = []
     // 轮询兜底：即使 SSE 不工作，也能看到回复
@@ -1300,7 +1304,7 @@ function readAsDataUrl(file) {
   })
 }
 
-/** 选择普通文件 → 上传宿主 → 记入待发送列表 */
+/** 选择普通文件：先暂存内容，发送时再按会话上传并取收据。 */
 async function pickFiles(input) {
   const files = Array.from(input.files || [])
   input.value = ''
@@ -1311,14 +1315,13 @@ async function pickFiles(input) {
     }
     try {
       const dataUrl = await readAsDataUrl(file)
-      const result = await api('upload-file', {
-        method: 'POST',
-        body: { name: file.name, data: dataUrl.slice(dataUrl.indexOf(',') + 1) },
+      state.pendingFiles.push({
+        name: file.name,
+        data: dataUrl.slice(dataUrl.indexOf(',') + 1),
       })
-      state.pendingFiles.push(result.attachment)
       renderPending()
     } catch (error) {
-      toast('文件上传失败：' + error.message)
+      toast('读取文件失败：' + error.message)
     }
   }
 }

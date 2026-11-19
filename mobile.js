@@ -821,15 +821,8 @@ export function registerMobile(ctx, config) {
               })
             }
             for (const file of files) {
-              if (!file || !file.attachmentId) continue
-              content.push({
-                type: 'file',
-                attachment: {
-                  attachmentId: String(file.attachmentId),
-                  name: file.name ? String(file.name) : undefined,
-                  bytes: Number(file.bytes || 0),
-                },
-              })
+              if (!file || !file.receiptId) continue
+              content.push({ type: 'file', receiptId: String(file.receiptId) })
             }
             const value = await ctx.sessionController.prompt({
               requestId: 'm-' + randomBytes(8).toString('hex'),
@@ -899,23 +892,24 @@ export function registerMobile(ctx, config) {
             return sendJson(res, 200, { ok: true, attachment: ref })
           }
 
-          // 普通文件上传：走 attachments.admitEncodedFile
+          // 普通文件上传：按会话走 fileUploads.uploadStream，返回与本次 prompt 绑定的收据
           if (action === 'upload-file') {
             const body = await readBody(req, 20 * 1024 * 1024)
             if (!body.data || !body.name) return sendJson(res, 400, { ok: false, error: '缺少文件数据' })
-            const attachments = ctx.get ? ctx.get('attachments') : ctx.attachments
-            if (!attachments || typeof attachments.admitEncodedFile !== 'function') {
-              return sendJson(res, 400, { ok: false, error: '宿主不支持文件附件' })
+            if (!body.sessionId) return sendJson(res, 400, { ok: false, error: '缺少 sessionId' })
+            const uploads = ctx.get ? ctx.get('fileUploads') : ctx.fileUploads
+            if (!uploads || typeof uploads.uploadStream !== 'function') {
+              return sendJson(res, 400, { ok: false, error: '宿主不支持文件上传' })
             }
-            // 参数是「规范化 base64 字符串」，由宿主自行解码与校验
-            const ref = await attachments.admitEncodedFile({
-              data: String(body.data),
+            const bytes = Buffer.from(String(body.data), 'base64')
+            const value = await uploads.uploadStream({
+              sessionId: body.sessionId,
               name: String(body.name),
+              data: (async function* chunks() {
+                yield bytes
+              })(),
             })
-            return sendJson(res, 200, {
-              ok: true,
-              attachment: { attachmentId: ref.attachmentId, name: ref.name, bytes: ref.bytes },
-            })
+            return sendJson(res, 200, { ok: true, receiptId: value.receiptId, file: value.file })
           }
 
           // 读取已存图片（用于回显历史消息里的图片）

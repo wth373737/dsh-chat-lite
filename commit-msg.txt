@@ -1,4 +1,6 @@
-fix(mobile): 文件上传传规范化 base64 字符串，而不是解码后的字节
+fix(mobile): 文件改用 fileUploads 上传收据（receiptId）而非持久引用
 
-admitEncodedFile 期望 canonical base64（它自己解码并校验），
-之前传 Uint8Array 会被拒绝（File upload is not canonical base64）。
+- 官方路径是「按会话上传 → 拿 receiptId → prompt 里带 {type:'file', receiptId}」，
+  直接给持久引用会被拒（File was not uploaded for this session）
+- 宿主 /api/upload-file 改为 uploadStream({sessionId, data, name})，返回 receiptId + file
+- 前端改为发送时才上传（此时会话已存在），文件内容只暂存在内存
