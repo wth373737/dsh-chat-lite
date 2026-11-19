@@ -241,16 +241,20 @@ function lanHosts() {
 /** 由请求 Host 推导端口，再拼出局域网可用的配对链接。 */
 function mobileUrls(req, token, fixedPort, publicBaseUrl) {
   const publicBase = String(publicBaseUrl || '').replace(/\/+$/, '')
-  if (publicBase) {
-    // 对外域名优先，同时保留局域网地址（Tailscale 未开启时仍可用）
-    return [publicBase + MOUNT + '/?t=' + token, 'http://' + String(req.headers.host || '127.0.0.1') + MOUNT + '/?t=' + token]
-  }
   const host = String(req.headers.host || '')
   const hostPort = host.includes(':') ? host.slice(host.lastIndexOf(':') + 1) : '80'
   const port = String(fixedPort || hostPort)
-  const urls = lanHosts().map((ip) => 'http://' + ip + ':' + port + MOUNT + '/?t=' + token)
-  urls.push('http://' + host + MOUNT + '/?t=' + token)
-  return urls
+  const lan = lanHosts().map((ip) => 'http://' + ip + ':' + port + MOUNT + '/?t=' + token)
+  if (publicBase) {
+    // 别名地址排最前：全新 Service Worker 作用域，用于从旧缓存里脱身
+    return [
+      publicBase + MOUNT_ALIASES[0] + '/?t=' + token,
+      publicBase + MOUNT + '/?t=' + token,
+      ...lan,
+      'http://' + host + MOUNT + '/?t=' + token,
+    ]
+  }
+  return [...lan, 'http://' + host + MOUNT + '/?t=' + token]
 }
 
 /** 设备 Cookie 的统一格式（Path 限定在挂载点内，HttpOnly，一年）。 */
@@ -410,7 +414,7 @@ export function registerMobile(ctx, config) {
                 cookieHeader(granted.cookie, mount),
               )
               // 去掉 ?t= 再跳一次，避免令牌留在地址栏/历史里
-              res.writeHead(302, { location: MOUNT + '/' })
+              res.writeHead(302, { location: mount + '/' })
               return res.end()
             }
             return sendFile(res, path.join(UI_DIR, 'index.html'))
