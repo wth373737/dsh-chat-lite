@@ -1,5 +1,6 @@
-feat(mobile): 首页动态注入资源版本号 + 版本自检接口
+fix(mobile): 补齐 dialog 元素引用（这是白屏的真因）+ 启动自检 + 页面错误展示
 
-- sendIndex：下发首页时把 app.js/app.css 换成文件 mtime 版本号，旧缓存永远命中不了
-- GET <mount>/__version：直接返回当前 build 与命中的挂载点，用于确认手机加载的是哪份代码
-- 页面标题带构建号（Chrome 里可见）
+- el 对象缺 dialog/dialogOk 等引用，模块顶层 addEventListener 抛错，
+  导致整个脚本中断：顶栏和输入框渲染出来，中间空白，配对界面也不出现
+- 新增 checkElements()：缺元素直接在页面顶部列出缺失 id
+- 新增 window error/unhandledrejection 提示层，运行时错误会显示在页面上

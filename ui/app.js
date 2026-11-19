@@ -1,3 +1,16 @@
+// 运行期错误直接显示在页面顶部，便于在手机上定位（正常情况不会出现）
+window.addEventListener('error', (event) => {
+  const box = document.createElement('pre')
+  box.style.cssText = 'position:fixed;left:0;right:0;top:0;z-index:999;margin:0;padding:8px;background:#fee;color:#900;font:12px/1.5 monospace;white-space:pre-wrap'
+  box.textContent = '[error] ' + (event.message || '') + '\n' + (event.filename || '') + ':' + (event.lineno || '')
+  document.body.appendChild(box)
+})
+window.addEventListener('unhandledrejection', (event) => {
+  const box = document.createElement('pre')
+  box.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:999;margin:0;padding:8px;background:#fee;color:#900;font:12px/1.5 monospace;white-space:pre-wrap'
+  box.textContent = '[rejection] ' + String((event.reason && event.reason.message) || event.reason)
+  document.body.appendChild(box)
+})
 // dsh-chat-lite 移动端前端（无框架）
 'use strict'
 
@@ -29,6 +42,24 @@ const el = {
   pairingInput: $('pairing-input'),
   pairingSubmit: $('pairing-submit'),
   pairingMsg: $('pairing-msg'),
+  dialog: $('dialog'),
+  dialogTitle: $('dialog-title'),
+  dialogInput: $('dialog-input'),
+  dialogText: $('dialog-text'),
+  dialogOk: $('dialog-ok'),
+  dialogCancel: $('dialog-cancel'),
+}
+
+/** 启动自检：缺元素时直接在页面上报出来，避免再次出现"白屏无线索"。 */
+function checkElements() {
+  const missing = Object.keys(el).filter((key) => !el[key])
+  if (missing.length === 0) return true
+  const box = document.createElement('pre')
+  box.style.cssText =
+    'position:fixed;left:0;right:0;top:0;z-index:999;margin:0;padding:8px;background:#fee;color:#900;font:12px/1.5 monospace;white-space:pre-wrap'
+  box.textContent = '[元素缺失] ' + missing.join(', ')
+  document.body.appendChild(box)
+  return false
 }
 
 const state = {
@@ -1044,6 +1075,7 @@ $('settings-entry').addEventListener('click', () => {
 
 async function boot() {
   document.title = '闲聊 v' + BUILD
+  if (!checkElements()) return
   const build = $('build')
   if (build) build.textContent = 'v' + BUILD
   renderChips()
