@@ -443,8 +443,12 @@ export function registerMobile(ctx, config) {
           if (action === 'upload') {
             const body = await readBody(req, 20 * 1024 * 1024)
             if (!body.data || !body.mediaType) return sendJson(res, 400, { ok: false, error: '缺少图片数据' })
+            const attachments = ctx.get ? ctx.get('attachments') : ctx.attachments
+            if (!attachments || typeof attachments.saveImage !== 'function') {
+              return sendJson(res, 400, { ok: false, error: '宿主不支持附件' })
+            }
             const bytes = Buffer.from(String(body.data), 'base64')
-            const ref = await ctx.attachments.saveImage({
+            const ref = await attachments.saveImage({
               data: new Uint8Array(bytes),
               mediaType: String(body.mediaType),
               name: body.name ? String(body.name) : undefined,
@@ -459,7 +463,8 @@ export function registerMobile(ctx, config) {
             if (!sessionId || !attachmentId) return sendJson(res, 400, { ok: false, error: '缺少参数' })
             let stored = null
             try {
-              const session = ctx.sessions.get(sessionId)
+              const sessions = (ctx.get ? ctx.get('sessions') : null) || ctx.sessions
+              const session = sessions && typeof sessions.get === 'function' ? sessions.get(sessionId) : null
               if (session && typeof session.readAttachment === 'function') {
                 stored = await session.readAttachment(attachmentId)
               }
@@ -486,7 +491,7 @@ export function registerMobile(ctx, config) {
               const value = await ctx.sessionController.rename({ sessionId: body.sessionId, title: String(body.title || '').slice(0, 120) })
               return sendJson(res, 200, { ok: true, value })
             }
-            const workspace = ctx.workspaceController
+            const workspace = (ctx.get ? ctx.get('workspaceController') : null) || ctx.workspaceController
             if (!workspace) return sendJson(res, 400, { ok: false, error: '宿主缺少 workspaceController' })
             if (op === 'pin') await workspace.pinSession({ sessionId: body.sessionId })
             else if (op === 'unpin') await workspace.unpinSession({ sessionId: body.sessionId })
