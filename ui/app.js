@@ -101,6 +101,7 @@ const state = {
   readOnly: false,        // 历史记录只读
   scope: 'title',         // 搜索范围：title | full
   searching: false,
+  expandedTools: new Set(),
   historyCursor: 0,
   historyHasMore: false,
   earliestSeq: 0,
@@ -631,6 +632,7 @@ async function openSession(id) {
     if (!state.static) startFollow(id)
     renderList()
   } catch (error) {
+    showErrorBar('[打开会话] ' + (error && error.message ? error.message : String(error)))
     toast('打开失败：' + error.message)
   }
 }
@@ -857,7 +859,9 @@ async function sendMessage() {
         body: { sessionId: id, name: item.name, data: item.data },
       })
       fileReceipts.push({ receiptId: uploaded.receiptId })
-      if (uploaded.savedPath) {
+      if (uploaded.textPreview) {
+        inlineText += '\n\n[附件 ' + item.name + ' 的文本内容]\n```\n' + uploaded.textPreview + '\n```'
+      } else if (uploaded.savedPath) {
         inlineText += '\n\n[附件 ' + item.name + ' 已保存到 ' + uploaded.savedPath +
           '，可以用读取文件的工具查看内容]'
       }

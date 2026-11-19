@@ -1,1 +1,8 @@
-fix(mobile): 文件选择改用文档类型白名单，Android 才会弹文件管理器而不是媒体库
+feat(mobile): PDF 自动抽取文本并内联到消息（模型可直接阅读）
+
+- 宿主：解压 FlateDecode 流、按定位操作符分段抽取文本（自实现，无外部依赖）
+- 上传 .pdf 时返回 textPreview（≤12000 字），前端拼进正文代码块
+- 实测某课件 PDF：正确抽出「Topic 5 Process Synchronization」等正文
+
+fix(mobile): 渲染崩溃（state.expandedTools 未定义导致所有会话白屏）
+- 补齐 expandedTools 状态；openSession 失败时把原因显示到错误条，便于定位
