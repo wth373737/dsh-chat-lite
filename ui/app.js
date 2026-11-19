@@ -424,6 +424,9 @@ async function startFollow(sessionId) {
       }
       const next = buildMessages([{ event: frame.event }])
       if (next.length) {
+        if (next.some((item) => item.role === 'user')) {
+          state.messages = state.messages.filter((item) => !item.local)
+        }
         state.messages = state.messages.concat(next)
         renderMessages()
       }
@@ -448,6 +451,39 @@ async function startFollow(sessionId) {
       if (state.current && state.current.id === sessionId) startFollow(sessionId)
     }, 3000)
   }
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+/**
+ * 发送后轮询直到出现新的助手消息。
+ * SSE 正常时它会先到，这个循环只是保险；最坏情况下也能在 1.5 秒内看到结果。
+ */
+async function pollForReply(sessionId, baselineAssistants) {
+  const deadline = Date.now() + 5 * 60 * 1000
+  while (Date.now() < deadline) {
+    await sleep(1500)
+    if (!state.current || state.current.id !== sessionId) return
+    try {
+      const data = await api('page?sessionId=' + encodeURIComponent(sessionId) + '&max=60')
+      const next = buildMessages(data.records)
+      const assistants = next.filter((item) => item.role === 'assistant').length
+      // 只有在出现「新的助手消息」时才整体替换，避免把流式中的文本覆盖成空
+      if (assistants > baselineAssistants) {
+        state.messages = next
+        state.running = false
+        state.liveText = ''
+        state.liveThinking = ''
+        renderMessages()
+        renderSend()
+        return
+      }
+    } catch {
+      // 网络抖动继续重试
+    }
+  }
+  state.running = false
+  renderSend()
 }
 
 function stopFollow() {
@@ -499,12 +535,24 @@ async function sendMessage() {
       data: item.data,
       ...(item.name ? { name: item.name } : {}),
     }))
-    await api('send', { method: 'POST', body: { sessionId: id, text, images } })
+    const baseline = state.messages.filter((item) => item.role === 'assistant').length
+    // 乐观显示：不等服务端回显，先把这条放到界面上
+    state.messages = state.messages.concat([{
+      role: 'user',
+      text,
+      images: state.pendingImages.map((item) => ({ localUrl: item.dataUrl })),
+      local: true,
+    }])
     state.pendingImages = []
     renderPending()
     state.running = true
     state.liveText = ''
+    state.liveThinking = ''
+    renderMessages()
     renderSend()
+    await api('send', { method: 'POST', body: { sessionId: id, text, images } })
+    // 轮询兜底：即使 SSE 不工作，也能看到回复
+    pollForReply(id, baseline)
   } catch (error) {
     toast('发送失败：' + error.message)
   }
@@ -594,6 +642,30 @@ el.scrim.addEventListener('click', closeDrawer)
 $('new-chat').addEventListener('click', newChat)
 $('new-chat-top').addEventListener('click', newChat)
 el.search.addEventListener('input', renderList)
+$('refresh').addEventListener('click', () => location.reload())
+
+// 消息区下拉刷新（页面本身不可滚动，所以自己实现）
+let pullStart = 0
+el.messages.addEventListener('touchstart', (event) => {
+  pullStart = el.messages.scrollTop <= 0 ? event.touches[0].clientY : 0
+}, { passive: true })
+el.messages.addEventListener('touchmove', (event) => {
+  if (!pullStart) return
+  if (event.touches[0].clientY - pullStart > 90) {
+    pullStart = 0
+    location.reload()
+  }
+}, { passive: true })
+
+// SW 更新后自动接管一次，避免"改了看不到"
+let reloading = false
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (reloading) return
+    reloading = true
+    location.reload()
+  })
+}
 
 // 惰性新建：只切到空态，真正创建留给第一次发送（避免堆一串空会话）
 function newChat() {
