@@ -453,6 +453,30 @@ export function registerMobile(ctx, config) {
             return sendJson(res, 200, { ok: true, ...value })
           }
 
+          // 分叉：atSeq 为空则从末尾分叉；text 给了就在新会话里立刻发一条
+          // 语义：分支 / 删除该段 / 修改 / 重新生成 都通过它实现
+          if (action === 'fork') {
+            const body = await readBody(req)
+            if (!body.sessionId) return sendJson(res, 400, { ok: false, error: '缺少 sessionId' })
+            const raw = await ctx.sessionController.fork({
+              sessionId: body.sessionId,
+              ...(body.atSeq === undefined ? {} : { atSeq: Number(body.atSeq) }),
+            })
+            const value = raw && raw.ok !== undefined ? (raw.ok ? raw.value : null) : raw
+            if (!value || !value.sessionId) {
+              return sendJson(res, 400, { ok: false, error: '分叉失败' })
+            }
+            if (body.text) {
+              await ctx.sessionController.prompt({
+                requestId: 'm-' + randomBytes(8).toString('hex'),
+                sessionId: value.sessionId,
+                mode: 'queue',
+                content: [{ type: 'text', text: String(body.text) }],
+              }, lifetime.signal)
+            }
+            return sendJson(res, 200, { ok: true, sessionId: value.sessionId })
+          }
+
           if (action === 'rename') {
             const body = await readBody(req)
             const value = await ctx.sessionController.rename({
@@ -476,7 +500,7 @@ export function registerMobile(ctx, config) {
             req.on('close', () => abort.abort())
             try {
               const stream = ctx.sessionController.follow(
-                { address: { kind: 'session', sessionId }, maxMessages: max },
+                { address: { kind: 'session', sessionId }, maxMessages: max, assistantStream: true },
                 abort.signal,
               )
               for await (const frame of stream) {

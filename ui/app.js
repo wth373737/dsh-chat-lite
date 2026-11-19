@@ -32,6 +32,8 @@ const state = {
   source: null,
   live: null,
   static: false,
+  editing: null,   // { atSeq, text } 修改用户消息时使用
+  liveText: '',   // 流式增量）
 }
 
 const EFFORT_LABEL = { max: '极', high: '高', low: '低', off: '关' }
@@ -263,11 +265,7 @@ function messageHtml(message, index) {
     ? '<button class="thinking-toggle" data-thinking="' + index + '">▸ 思考</button>' +
       '<div class="thinking-body" data-thinking-body="' + index + '" hidden>' + escapeHtml(message.thinking) + '</div>'
     : ''
-  const usage = message.usage
-    ? '<div class="usage">本次消耗 ' +
-      (message.usage.totalTokens || (message.usage.inputTokens || 0) + (message.usage.outputTokens || 0)) +
-      ' tokens（输入 ' + (message.usage.inputTokens || 0) + ' · 输出 ' + (message.usage.outputTokens || 0) + '）</div>'
-    : ''
+  const usage = message.usage ? usageHtml(message.usage) : ''
   return (
     '<div class="msg assistant">' +
     thinking +
@@ -278,12 +276,35 @@ function messageHtml(message, index) {
   )
 }
 
+/** 用量：totalTokens 含缓存命中，所以分开显示，避免"总数对不上"的困惑。 */
+function usageHtml(usage) {
+  const num = (value) => Number(value || 0).toLocaleString('zh-CN')
+  const input = Number(usage.inputTokens || 0)
+  const output = Number(usage.outputTokens || 0)
+  const cache = Number(usage.cacheReadTokens || 0)
+  const billable = input + output
+  const parts = ['输入 ' + num(input), '输出 ' + num(output)]
+  if (cache > 0) parts.push('缓存命中 ' + num(cache))
+  return '<div class="usage">本次 ' + num(billable) + ' tokens（' + parts.join(' · ') + '）</div>'
+}
+
 function actionBtn(kind, label, index, disabled) {
   return (
     '<button class="icon-btn' + (disabled ? ' disabled' : '') + '" type="button" ' +
     'data-action="' + kind + '" data-index="' + index + '"' + (disabled ? ' disabled' : '') +
     ' title="' + label + '" aria-label="' + label + '">' + iconSvg(kind) + '</button>'
   )
+}
+
+/** 从 assistant-stream 帧里取文本增量（不同版本字段略有差异，做了兼容）。 */
+function extractDelta(frame) {
+  if (!frame) return ''
+  const chunk = frame.chunk
+  if (chunk && chunk.type === 'text-delta' && typeof chunk.text === 'string') return chunk.text
+  if (frame.type === 'text-delta' && typeof frame.text === 'string') return frame.text
+  if (frame.delta && typeof frame.delta.text === 'string') return frame.delta.text
+  if (typeof frame.text === 'string') return frame.text
+  return ''
 }
 
 function iconSvg(kind) {
@@ -303,7 +324,9 @@ function renderMessages() {
   el.empty.hidden = hasAny || Boolean(state.current)
   el.messages.hidden = !hasAny
   const typing = state.running
-    ? '<div class="msg assistant"><div class="typing"><span></span><span></span><span></span></div></div>'
+    ? state.liveText
+      ? '<div class="msg assistant"><div class="body">' + renderMarkdown(state.liveText) + '</div></div>'
+      : '<div class="msg assistant"><div class="typing"><span></span><span></span><span></span></div></div>'
     : ''
   el.messages.innerHTML = state.messages.map(messageHtml).join('') + typing
   if (hasAny) {
@@ -351,11 +374,18 @@ async function startFollow(sessionId) {
     } else if (frame.type === 'event') {
       if (frame.event && frame.event.type === 'assistant/message') {
         state.running = false
+        state.liveText = ''
         renderSend()
       }
       const next = buildMessages([{ event: frame.event }])
       if (next.length) {
         state.messages = state.messages.concat(next)
+        renderMessages()
+      }
+    } else if (frame.type === 'assistant-stream') {
+      const delta = extractDelta(frame.frame || frame)
+      if (delta) {
+        state.liveText += delta
         renderMessages()
       }
     } else if (frame.type === 'error') {
@@ -399,9 +429,23 @@ async function sendMessage() {
   el.input.value = ''
   autoGrow()
   try {
+    if (state.editing) {
+      const editing = state.editing
+      state.editing = null
+      const result = await api('fork', {
+        method: 'POST',
+        body: { sessionId: state.current.id, atSeq: editing.atSeq, text },
+      })
+      await loadList()
+      await openSession(result.sessionId)
+      state.running = true
+      renderSend()
+      return
+    }
     const id = await ensureSession()
     await api('send', { method: 'POST', body: { sessionId: id, text } })
     state.running = true
+    state.liveText = ''
     renderSend()
   } catch (error) {
     toast('发送失败：' + error.message)
@@ -539,8 +583,52 @@ el.messages.addEventListener('click', async (event) => {
     toast(ok ? '已复制整条消息' : '复制失败，请手动选择')
     return
   }
-  toast('「' + action.getAttribute('title') + '」下一步实现')
+  const prevSeq = (i) => (i > 0 ? state.messages[i - 1].seq : undefined)
+  try {
+    if (kind === 'edit') {
+      if (message.role !== 'user') return toast('只有你自己的消息可以修改')
+      if (prevSeq(index) === undefined) return toast('第一条消息暂不支持修改')
+      state.editing = { atSeq: prevSeq(index) }
+      el.input.value = message.text
+      autoGrow()
+      el.input.focus()
+      toast('修改后发送，将从这一条重新分叉')
+      return
+    }
+    if (kind === 'regen') {
+      const prev = state.messages[index - 1]
+      if (!prev || prev.role !== 'user') return toast('找不到对应的用户消息')
+      const atSeq = prevSeq(index - 1)
+      if (atSeq === undefined) return toast('第一条无法重新生成')
+      await forkAndOpen(atSeq, prev.text)
+      return
+    }
+    if (kind === 'branch') {
+      await forkAndOpen(message.seq)
+      return
+    }
+    if (kind === 'delete') {
+      const atSeq = prevSeq(index)
+      if (atSeq === undefined) return toast('第一条之前没有可保留的内容')
+      await forkAndOpen(atSeq)
+      return
+    }
+  } catch (error) {
+    toast('操作失败：' + error.message)
+  }
 })
+
+/** 分叉并在新会话里继续（可选立刻发一条）。 */
+async function forkAndOpen(atSeq, text) {
+  if (!state.current) return toast('当前没有会话')
+  const body = { sessionId: state.current.id }
+  if (atSeq !== undefined) body.atSeq = atSeq
+  if (text) body.text = text
+  const result = await api('fork', { method: 'POST', body })
+  await loadList()
+  await openSession(result.sessionId)
+  toast(text ? '已在新会话重发' : '已分叉到新会话')
+}
 
 el.effortChip.addEventListener('click', () => {
   const rect = el.effortChip.getBoundingClientRect()
