@@ -14,6 +14,7 @@
 import { randomBytes, createHash } from 'node:crypto'
 import { readFile, writeFile, mkdir } from 'node:fs/promises'
 import path from 'node:path'
+import { networkInterfaces } from 'node:os'
 
 const MOUNT = '/chat-lite/m'
 const COOKIE_NAME = 'chat_lite_dev'
@@ -69,6 +70,32 @@ function isLoopback(req) {
     return host === '127.0.0.1' || host === 'localhost' || host === '[::1]'
   }
   return false
+}
+
+/** 列出本机所有局域网 IPv4 地址（用于给出手机可用的完整链接）。 */
+function lanHosts() {
+  const out = []
+  try {
+    const nets = networkInterfaces()
+    for (const name of Object.keys(nets)) {
+      for (const net of nets[name] || []) {
+        if (net.family !== 'IPv4' || net.internal) continue
+        out.push(net.address)
+      }
+    }
+  } catch {
+    // 忽略
+  }
+  return out
+}
+
+/** 由请求 Host 推导端口，再拼出局域网可用的配对链接。 */
+function mobileUrls(req, token) {
+  const host = String(req.headers.host || '')
+  const port = host.includes(':') ? host.slice(host.lastIndexOf(':') + 1) : '80'
+  const urls = lanHosts().map((ip) => 'http://' + ip + ':' + port + MOUNT + '/?t=' + token)
+  urls.push('http://' + host + MOUNT + '/?t=' + token)
+  return urls
 }
 
 const hashOf = (value) => createHash('sha256').update(String(value)).digest('hex').slice(0, 32)
@@ -235,6 +262,7 @@ export function registerMobile(ctx, config) {
               ok: true,
               token: state.token,
               url: 'http://' + host + MOUNT + '/?t=' + state.token,
+              urls: mobileUrls(req, state.token),
               devices: state.devices.map((item) => ({
                 id: item.id,
                 label: item.label,
@@ -247,11 +275,29 @@ export function registerMobile(ctx, config) {
           const device = await guard(req, res)
           if (!device) return
 
+          // 撤销全部设备并换新令牌（必须从本机发起，避免被人远程踢掉）
+          if (action === 'revoke') {
+            if (!isLoopback(req)) return sendJson(res, 403, { ok: false, error: 'loopback only' })
+            const token = await auth.revokeAll()
+            const host = req.headers.host || '127.0.0.1'
+            return sendJson(res, 200, {
+              ok: true,
+              token,
+              url: 'http://' + host + MOUNT + '/?t=' + token,
+              urls: mobileUrls(req, token),
+            })
+          }
+
           if (action === 'bootstrap') {
             const controller = ctx.sessionController
             const listed = await controller.list({})
             const items = (listed.items || []).filter((item) => item.cwd === chatDir && !item.origin)
-            const catalog = await controller.modelCatalog()
+            let catalog = null
+            try {
+              catalog = await controller.modelCatalog()
+            } catch {
+              catalog = null
+            }
             return sendJson(res, 200, {
               ok: true,
               chatDir,
@@ -271,9 +317,12 @@ export function registerMobile(ctx, config) {
             const sessionId = url.searchParams.get('sessionId') || ''
             const beforeSeq = url.searchParams.get('beforeSeq')
             const max = Number(url.searchParams.get('max') || '30')
+            const inspected = await ctx.sessionController.inspect(sessionId)
+            const events = inspected.events || []
+            const lastSeq = events.length ? events[events.length - 1].seq : 0
             const value = await ctx.sessionController.page({
               address: { kind: 'session', sessionId },
-              throughSeq: Number.MAX_SAFE_INTEGER,
+              throughSeq: lastSeq,
               ...(beforeSeq ? { beforeSeq: Number(beforeSeq) } : {}),
               maxMessages: max,
             })

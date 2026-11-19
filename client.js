@@ -1320,6 +1320,9 @@ window.__ModuleLoader__.load({
       const [webEnabled, setWebEnabled] = useState(null)
       const [webBusy, setWebBusy] = useState(false)
       const [webMessage, setWebMessage] = useState(null)
+      const [mobile, setMobile] = useState(null)
+      const [mobileMessage, setMobileMessage] = useState(null)
+      const [mobileBusy, setMobileBusy] = useState(false)
 
       const load = useCallback(async () => {
         setBusy(true)
@@ -1369,6 +1372,52 @@ window.__ModuleLoader__.load({
       }, [text])
 
       const dirty = text !== saved
+
+      // 手机访问：拿长期配对链接与已授权设备
+      const loadMobile = useCallback(async () => {
+        try {
+          const response = await fetch('/chat-lite/m/api/token', { credentials: 'same-origin' })
+          const json = await response.json()
+          if (!json.ok) throw new Error(json.error || 'HTTP ' + response.status)
+          setMobile({ urls: json.urls || [json.url], devices: json.devices || [] })
+        } catch (error) {
+          setMobileMessage({ ok: false, text: String((error && error.message) || error) })
+        }
+      }, [])
+
+      useEffect(() => {
+        loadMobile()
+      }, [loadMobile])
+
+      const copyMobileUrl = useCallback(async (value) => {
+        try {
+          await navigator.clipboard.writeText(value)
+          setMobileMessage({ ok: true, text: t('已复制到剪贴板', 'copied') })
+        } catch {
+          setMobileMessage({ ok: false, text: t('浏览器拒绝了剪贴板访问，请手动长按选中复制', 'copy manually') })
+        }
+      }, [])
+
+      const revokeMobile = useCallback(async () => {
+        setMobileBusy(true)
+        setMobileMessage(null)
+        try {
+          const response = await fetch('/chat-lite/m/api/revoke', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'content-type': 'application/json', 'x-chat-lite': '1' },
+            body: '{}',
+          })
+          const json = await response.json()
+          if (!json.ok) throw new Error(json.error || 'HTTP ' + response.status)
+          setMobile({ urls: json.urls || [json.url], devices: [] })
+          setMobileMessage({ ok: true, text: t('已撤销全部设备并换发新令牌', 'all devices revoked') })
+        } catch (error) {
+          setMobileMessage({ ok: false, text: String((error && error.message) || error) })
+        } finally {
+          setMobileBusy(false)
+        }
+      }, [])
 
       // 联网搜索开关
       const loadWeb = useCallback(async () => {
@@ -1553,6 +1602,115 @@ window.__ModuleLoader__.load({
                   }),
                 },
                 webMessage.text,
+              )
+            : null,
+        ),
+        h(
+          'div',
+          { style: styles.card },
+          h('div', { style: styles.cardTitle }, t('手机访问', 'Mobile access')),
+          h(
+            'div',
+            { style: styles.note },
+            t(
+              '用手机打开下面任一链接即可。首次打开会写入长期 Cookie，之后重启 DSH 也不用重新扫码。链接里的令牌等同于这台机器的钥匙，别发给别人。',
+              'Open one of the links below on the phone once; a long-lived cookie is stored, so a DSH restart no longer requires re-pairing. The token in the link is a full credential — do not share it.',
+            ),
+          ),
+          mobile
+            ? h(
+                'div',
+                { style: { marginTop: 10 } },
+                mobile.urls.map((value, index) =>
+                  h(
+                    'div',
+                    {
+                      key: 'm' + index,
+                      style: {
+                        display: 'flex',
+                        gap: 8,
+                        alignItems: 'center',
+                        marginBottom: 6,
+                        flexWrap: 'wrap',
+                      },
+                    },
+                    h(
+                      'code',
+                      {
+                        style: Object.assign({}, styles.mono, {
+                          flex: 1,
+                          minWidth: 0,
+                          wordBreak: 'break-all',
+                          background: 'rgba(127,127,127,0.10)',
+                          padding: '4px 8px',
+                          borderRadius: 6,
+                        }),
+                      },
+                      value,
+                    ),
+                    h(
+                      'button',
+                      { type: 'button', style: styles.buttonSmall, onClick: () => copyMobileUrl(value) },
+                      t('复制', 'copy'),
+                    ),
+                  ),
+                ),
+                h(
+                  'div',
+                  { style: Object.assign({}, styles.mono, { color: 'var(--dsw-alias-label-tertiary)', marginTop: 6 }) },
+                  t(
+                    '已授权设备 ' + mobile.devices.length + ' 台',
+                    mobile.devices.length + ' device(s) paired',
+                  ),
+                ),
+                mobile.devices.length
+                  ? h(
+                      'div',
+                      { style: { marginTop: 4 } },
+                      mobile.devices.map((device) =>
+                        h(
+                          'div',
+                          {
+                            key: device.id,
+                            style: Object.assign({}, styles.mono, {
+                              color: 'var(--dsw-alias-label-secondary)',
+                              fontSize: 11.5,
+                            }),
+                          },
+                          (device.label || device.id) + '  ·  ' + String(device.lastSeen || '').slice(0, 16).replace('T', ' '),
+                        ),
+                      ),
+                    )
+                  : null,
+              )
+            : h('div', { style: styles.note }, t('读取中…', 'Loading…')),
+          h(
+            'div',
+            { style: Object.assign({}, styles.bar, { marginTop: 10 }) },
+            h(
+              'button',
+              { type: 'button', style: styles.buttonSmall, onClick: loadMobile, disabled: mobileBusy },
+              t('刷新', 'Refresh'),
+            ),
+            h(
+              'button',
+              { type: 'button', style: styles.buttonSmall, onClick: revokeMobile, disabled: mobileBusy },
+              t('撤销全部设备并换令牌', 'Revoke all devices'),
+            ),
+          ),
+          mobileMessage
+            ? h(
+                'div',
+                {
+                  style: Object.assign({}, styles.mono, {
+                    marginTop: 8,
+                    whiteSpace: 'pre-wrap',
+                    color: mobileMessage.ok
+                      ? 'var(--dsw-alias-state-success-primary, #2e7d32)'
+                      : 'var(--dsw-alias-state-error-primary, #b3261e)',
+                  }),
+                },
+                mobileMessage.text,
               )
             : null,
         ),
