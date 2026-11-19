@@ -15,6 +15,9 @@
         # 移动端固定端口：DSH 自身每次重启都换随机端口，手机书签会失效，
         # 所以移动页面单独监听这个端口（被占用时自动 +1 顺延）。
         mobilePort: 8787
+        # 通过 Tailscale Serve / Cloudflare Tunnel 对外时，填对外域名（含 https://），
+        # 配对链接就会用它；留空则按局域网地址生成。
+        publicBaseUrl: ''
 
     # 闲聊会话专用 preset：client.js 创建会话时以 agentPreset: 'chat-zh' 指定。
     # 设计要点：

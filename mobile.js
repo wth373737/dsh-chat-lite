@@ -194,6 +194,9 @@ function parseCookies(req) {
 }
 
 function isLoopback(req) {
+  // 经过反向代理（Tailscale Serve / Cloudflare Tunnel）的请求一定带这个头，
+  // 即使 socket 是本机也必须按外部处理，否则令牌接口会被手机拿到。
+  if (req.headers['x-forwarded-for'] || req.headers['x-real-ip']) return false
   const host = String(req.headers.host || '').toLowerCase().replace(/:\d+$/, '')
   if (host === '127.0.0.1' || host === 'localhost' || host === '[::1]') return true
   const socket = req.socket && req.socket.remoteAddress
@@ -222,7 +225,11 @@ function lanHosts() {
 }
 
 /** 由请求 Host 推导端口，再拼出局域网可用的配对链接。 */
-function mobileUrls(req, token, fixedPort) {
+function mobileUrls(req, token, fixedPort, publicBaseUrl) {
+  const publicBase = String(publicBaseUrl || '').replace(/\/+$/, '')
+  if (publicBase) {
+    return [publicBase + MOUNT + '/?t=' + token]
+  }
   const host = String(req.headers.host || '')
   const hostPort = host.includes(':') ? host.slice(host.lastIndexOf(':') + 1) : '80'
   const port = String(fixedPort || hostPort)
@@ -416,7 +423,7 @@ export function registerMobile(ctx, config) {
               ok: true,
               token: state.token,
               url: 'http://' + host + MOUNT + '/?t=' + state.token,
-              urls: mobileUrls(req, state.token, portRef.value),
+              urls: mobileUrls(req, state.token, portRef.value, config.publicBaseUrl),
               devices: state.devices.map((item) => ({
                 id: item.id,
                 label: item.label,
@@ -438,7 +445,7 @@ export function registerMobile(ctx, config) {
               ok: true,
               token,
               url: 'http://' + host + MOUNT + '/?t=' + token,
-              urls: mobileUrls(req, token, portRef.value),
+              urls: mobileUrls(req, token, portRef.value, config.publicBaseUrl),
             })
           }
 
