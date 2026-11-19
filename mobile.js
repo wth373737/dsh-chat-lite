@@ -857,6 +857,19 @@ export function registerMobile(ctx, config) {
             })
           }
 
+          // 连接状态：给 App 内设置页用（需要设备 Cookie，不对外）
+          if (action === 'status') {
+            const state = await auth.load()
+            return sendJson(res, 200, {
+              ok: true,
+              device: { id: device.id, label: device.label, lastSeen: device.lastSeen },
+              devices: (state.devices || []).length,
+              urls: mobileUrls(req, state.token, portRef.value, config.publicBaseUrl).map((url) => url.replace(/[?&]t=[^&]+/, '')),
+              chatDir,
+              mobilePort: portRef.value,
+            })
+          }
+
           if (action === 'bootstrap') {
             const controller = ctx.sessionController
             const listed = await controller.list({}, lifetime.signal)

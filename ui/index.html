@@ -32,16 +32,7 @@
   <div id="list" class="list"></div>
   <button id="settings-entry" class="drawer-foot" type="button">
     <svg viewBox="0 0 24 24" class="icon"><path d="M12 8a4 4 0 100 8 4 4 0 000-8zm9 4a7 7 0 01-.1 1.2l2 1.6-2 3.4-2.4-1a7 7 0 01-2 1.2l-.3 2.6h-4l-.3-2.6a7 7 0 01-2-1.2l-2.4 1-2-3.4 2-1.6A7 7 0 013 12c0-.4 0-.8.1-1.2l-2-1.6 2-3.4 2.4 1a7 7 0 012-1.2L7.8 3h4l.3 2.6a7 7 0 012 1.2l2.4-1 2 3.4-2 1.6c.1.4.1.8.1 1.2z"/></svg>
-    连接 / 重新配对
-  </button>
-    <div class="font-row">
-    <span>字体</span>
-    <button id="font-minus" type="button" aria-label="缩小字体">A−</button>
-    <span id="font-value" class="font-value">100%</span>
-    <button id="font-plus" type="button" aria-label="放大字体">A+</button>
-  </div>
-  <button id="hard-reload" class="drawer-foot" type="button">
-    ⟲ 清缓存刷新
+    设置
     <span id="build" class="build"></span>
   </button>
 </aside>
@@ -103,6 +94,51 @@
     </div>
   </footer>
 </main>
+
+<div id="settings-panel" class="sheet-panel" hidden>
+  <div class="sheet-panel-head">
+    <span>设置</span>
+    <button id="settings-close" type="button" aria-label="关闭">×</button>
+  </div>
+  <div class="sheet-panel-body">
+    <div class="setting-row">
+      <div class="setting-label">此设备</div>
+      <div id="setting-device" class="setting-value">—</div>
+    </div>
+    <div class="setting-row">
+      <div class="setting-label">已配对设备</div>
+      <div id="setting-devices" class="setting-value">—</div>
+    </div>
+    <div class="setting-row column">
+      <div class="setting-label">访问地址</div>
+      <div id="setting-urls" class="setting-value mono"></div>
+    </div>
+    <div class="setting-row">
+      <div class="setting-label">字体</div>
+      <div class="setting-value">
+        <button id="font-minus2" type="button" class="mini">A−</button>
+        <span id="font-value2" class="font-value">100%</span>
+        <button id="font-plus2" type="button" class="mini">A+</button>
+      </div>
+    </div>
+    <div class="setting-row">
+      <div class="setting-label">配对</div>
+      <div class="setting-value">
+        <button id="settings-pair" type="button" class="mini">重新配对</button>
+      </div>
+    </div>
+    <div class="setting-row">
+      <div class="setting-label">缓存</div>
+      <div class="setting-value">
+        <button id="settings-clear" type="button" class="mini">清缓存并刷新</button>
+      </div>
+    </div>
+    <div class="setting-row">
+      <div class="setting-label">版本</div>
+      <div id="setting-build" class="setting-value mono">—</div>
+    </div>
+  </div>
+</div>
 
 <div id="effort-pop" class="pop" hidden>
   <button type="button" data-effort="max">思考强度:极</button>

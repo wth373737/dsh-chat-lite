@@ -63,6 +63,11 @@ const el = {
   pairingInput: $('pairing-input'),
   pairingSubmit: $('pairing-submit'),
   pairingMsg: $('pairing-msg'),
+  settingsPanel: $('settings-panel'),
+  settingDevice: $('setting-device'),
+  settingDevices: $('setting-devices'),
+  settingUrls: $('setting-urls'),
+  settingBuild: $('setting-build'),
   dialog: $('dialog'),
   dialogTitle: $('dialog-title'),
   dialogInput: $('dialog-input'),
@@ -1009,7 +1014,6 @@ el.searchTabs.addEventListener('click', (event) => {
   runSearch(state.scope)
 })
 $('refresh').addEventListener('click', () => location.reload())
-$('hard-reload').addEventListener('click', hardReload)
 
 /**
  * 卡在旧前端时的唯一可靠手段：注销 Service Worker、清空所有缓存，再带参数重进。
@@ -1473,9 +1477,43 @@ function applyFontScale(index, persist) {
   fontIndex = Math.max(0, Math.min(FONT_STEPS.length - 1, index))
   const scale = FONT_STEPS[fontIndex]
   document.documentElement.style.setProperty('--fs', String(scale))
-  const label = $('font-value')
-  if (label) label.textContent = Math.round(scale * 100) + '%'
+  const label = Math.round(scale * 100) + '%'
+  for (const id of ['font-value', 'font-value2']) {
+    const node = $(id)
+    if (node) node.textContent = label
+  }
   if (persist) localStorage.setItem('chat-lite:font', String(fontIndex))
+}
+
+/** 打开设置面板并拉取连接信息。 */
+async function openSettings() {
+  el.settingsPanel.hidden = false
+  el.settingDevice.textContent = '读取中…'
+  el.settingDevices.textContent = '—'
+  el.settingUrls.textContent = '—'
+  el.settingBuild.textContent = BUILD
+  syncFontLabels()
+  try {
+    const status = await api('status')
+    el.settingDevice.textContent = (status.device && status.device.label) || (status.device && status.device.id) || '—'
+    el.settingDevices.textContent = String(status.devices || 0) + ' 台'
+    el.settingUrls.textContent = (status.urls || []).join('\n')
+  } catch (error) {
+    el.settingDevice.textContent = '读取失败'
+    el.settingUrls.textContent = String(error.message || error)
+  }
+}
+
+function closeSettings() {
+  el.settingsPanel.hidden = true
+}
+
+function syncFontLabels() {
+  const label = Math.round(FONT_STEPS[fontIndex] * 100) + '%'
+  for (const id of ['font-value', 'font-value2']) {
+    const node = $(id)
+    if (node) node.textContent = label
+  }
 }
 
 function showPairing(message) {
@@ -1517,13 +1555,24 @@ async function submitPairing() {
   }
 }
 
-$('font-plus').addEventListener('click', () => applyFontScale(fontIndex + 1, true))
-$('font-minus').addEventListener('click', () => applyFontScale(fontIndex - 1, true))
+
+
+$('settings-close').addEventListener('click', closeSettings)
+el.settingsPanel.addEventListener('click', (event) => {
+  if (event.target === el.settingsPanel) closeSettings()
+})
+$('font-plus2').addEventListener('click', () => applyFontScale(fontIndex + 1, true))
+$('font-minus2').addEventListener('click', () => applyFontScale(fontIndex - 1, true))
+$('settings-pair').addEventListener('click', () => {
+  closeSettings()
+  showPairing('粘贴新的配对链接即可换绑这台设备')
+})
+$('settings-clear').addEventListener('click', hardReload)
 
 el.pairingSubmit.addEventListener('click', submitPairing)
 $('settings-entry').addEventListener('click', () => {
   closeDrawer()
-  showPairing('粘贴新的配对链接即可换绑这台设备')
+  openSettings()
 })
 
 async function boot() {
@@ -1546,6 +1595,7 @@ async function boot() {
   // 测试/书签用深链：#drawer 打开抽屉；#s:<sessionId> 直接进会话
   const hash = decodeURIComponent(location.hash || '')
   if (hash === '#drawer') openDrawer()
+  if (hash === '#settings') openSettings()
   if (hash.startsWith('#s:')) {
     const raw = hash.slice(3)
     state.static = raw.includes('static')
