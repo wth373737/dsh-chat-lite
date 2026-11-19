@@ -783,14 +783,29 @@ el.pending.addEventListener('click', (event) => {
   renderPending()
 })
 
-window.addEventListener('online', () => setConn(true))
-window.addEventListener('offline', () => setConn(false))
+function updateOnlineState() {
+  const offline = navigator.onLine === false
+  if (el.offlineBanner) el.offlineBanner.hidden = !offline
+  setConn(!offline)
+}
+
+window.addEventListener('online', updateOnlineState)
+window.addEventListener('offline', updateOnlineState)
+
+// Service Worker：离线壳 + 最近 3 天缓存
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js', { scope: './' }).catch(() => {
+      // https/localhost 之外注册会失败，属于预期
+    })
+  })
+}
 
 // ── 启动 ─────────────────────────────────────────────────
 async function boot() {
   renderChips()
   renderSend()
-  setConn(true)
+  updateOnlineState()
   try {
     await loadList()
   } catch (error) {

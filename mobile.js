@@ -42,6 +42,7 @@ const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.svg': 'image/svg+xml',
   '.json': 'application/json; charset=utf-8',
+  '.webmanifest': 'application/manifest+json; charset=utf-8',
   '.png': 'image/png',
   '.webp': 'image/webp',
 }
@@ -376,6 +377,22 @@ export function registerMobile(ctx, config) {
               return res.end()
             }
             return sendFile(res, path.join(UI_DIR, 'index.html'))
+          }
+
+          // Service Worker 必须挂在作用域根部，否则控制不到 /chat-lite/m/
+          if (req.method === 'GET' && sub === '/sw.js') {
+            try {
+              const code = await readFile(path.join(UI_DIR, 'sw.js'))
+              res.writeHead(200, {
+                'content-type': 'application/javascript; charset=utf-8',
+                'service-worker-allowed': MOUNT + '/',
+                'cache-control': 'no-cache',
+              })
+              res.end(code)
+            } catch {
+              sendText(res, 404, 'not found')
+            }
+            return
           }
 
           // 静态资源：/ui/<file>

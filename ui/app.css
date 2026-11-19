@@ -272,3 +272,8 @@ body {
 }
 .menu-sheet button:active { background: var(--bg); }
 .menu-sheet button.danger { color: var(--err); }
+.offline-banner {
+  position: fixed; left: 0; right: 0; top: 0; z-index: 60;
+  background: var(--ink-2); color: #fff; font-size: 12.5px;
+  text-align: center; padding: calc(4px + var(--safe-t)) 8px 4px;
+}
