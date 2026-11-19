@@ -7,3 +7,5 @@ mount-chat-lite.ps1
 
 # 设置页保存时自动生成的备份
 *.bak-*
+
+commit-msg.txt
