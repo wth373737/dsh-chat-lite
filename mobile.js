@@ -1016,11 +1016,17 @@ export function registerMobile(ctx, config) {
             const bytes = Buffer.from(String(body.data), 'base64')
             // PDF：顺手抽出文本，正文里直接给模型看
             let textPreview = ''
+            let pdfScanned = false
             if (/\.pdf$/i.test(String(body.name))) {
               try {
                 textPreview = extractPdfText(bytes, 12000)
+                if (textPreview.replace(/\s/g, '').length < 200) {
+                  pdfScanned = true
+                  textPreview = ''
+                }
               } catch {
                 textPreview = ''
+                pdfScanned = true
               }
             }
             const value = await uploads.uploadStream({

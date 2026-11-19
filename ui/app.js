@@ -859,7 +859,10 @@ async function sendMessage() {
         body: { sessionId: id, name: item.name, data: item.data },
       })
       fileReceipts.push({ receiptId: uploaded.receiptId })
-      if (uploaded.textPreview) {
+      if (uploaded.pdfScanned) {
+        inlineText += '\n\n[附件 ' + item.name + ' 看起来是扫描版 PDF，自动抽取的文本很少，' +
+          '如果你需要里面的具体内容，请让用户发关键页的截图]'
+      } else if (uploaded.textPreview) {
         inlineText += '\n\n[附件 ' + item.name + ' 的文本内容]\n```\n' + uploaded.textPreview + '\n```'
       } else if (uploaded.savedPath) {
         inlineText += '\n\n[附件 ' + item.name + ' 已保存到 ' + uploaded.savedPath +
