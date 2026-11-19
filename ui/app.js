@@ -41,6 +41,7 @@ const el = {
   scrim: $('drawer-scrim'),
   list: $('list'),
   search: $('search'),
+  searchTabs: $('search-tabs'),
   title: $('title'),
   messages: $('messages'),
   empty: $('empty'),
@@ -97,6 +98,8 @@ const state = {
   liveThinking: '',
   hasMore: false,
   readOnly: false,        // 历史记录只读
+  scope: 'title',         // 搜索范围：title | full
+  searching: false,
   historyCursor: 0,
   historyHasMore: false,
   earliestSeq: 0,
@@ -228,6 +231,7 @@ function timeLabel(ts) {
 }
 
 function renderList() {
+  if (state.searching) return
   const query = el.search.value.trim().toLowerCase()
   const rows = state.sessions
     .filter((item) => !state.hidden.has(item.id))
@@ -315,6 +319,53 @@ async function loadList() {
   state.sessions = state.sessions.concat(historyRows)
   state.historyHasMore = Boolean(history.hasMore)
   renderList()
+}
+
+// ── 搜索（标题 / 全文）────────────────────────────────────────
+let searchTimer = null
+let searchSeq = 0
+
+function renderSearchResults(items, query) {
+  if (!items.length) {
+    el.list.innerHTML = '<div class="empty-list">没有匹配「' + escapeHtml(query) + '」</div>'
+    return
+  }
+  el.list.innerHTML = items
+    .map((item) => {
+      const time = item.updatedAt ? timeLabel(item.updatedAt) : ''
+      const snippet = item.snippet
+        ? '<div class="row-snippet">' + escapeHtml(item.snippet) + '</div>'
+        : ''
+      return (
+        '<div class="row" data-id="' + escapeHtml(item.id) + '">' +
+        '<div class="row-title"><div>' + escapeHtml(item.title || '未命名对话') + '</div>' + snippet + '</div>' +
+        '<div class="row-time">' + time + '</div>' +
+        '</div>'
+      )
+    })
+    .join('')
+}
+
+async function runSearch(scope) {
+  const query = el.search.value.trim()
+  if (!query) {
+    el.searchTabs.hidden = true
+    state.searching = false
+    renderList()
+    return
+  }
+  state.searching = true
+  el.searchTabs.hidden = false
+  const seq = ++searchSeq
+  el.list.innerHTML = '<div class="empty-list">搜索中…</div>'
+  try {
+    const data = await api('search?q=' + encodeURIComponent(query) + '&scope=' + scope + '&limit=40')
+    if (seq !== searchSeq) return
+    renderSearchResults(data.items || [], query)
+  } catch (error) {
+    if (seq !== searchSeq) return
+    el.list.innerHTML = '<div class="empty-list">搜索失败：' + escapeHtml(error.message) + '</div>'
+  }
 }
 
 // ── 会话 ───────────────────────────────────────────────────
@@ -855,7 +906,19 @@ $('open-drawer').addEventListener('click', openDrawer)
 el.scrim.addEventListener('click', closeDrawer)
 $('new-chat').addEventListener('click', newChat)
 $('new-chat-top').addEventListener('click', newChat)
-el.search.addEventListener('input', renderList)
+el.search.addEventListener('input', () => {
+  clearTimeout(searchTimer)
+  searchTimer = setTimeout(() => runSearch(state.scope), 260)
+})
+el.searchTabs.addEventListener('click', (event) => {
+  const button = event.target.closest('[data-scope]')
+  if (!button) return
+  state.scope = button.dataset.scope
+  for (const item of el.searchTabs.querySelectorAll('button')) {
+    item.classList.toggle('active', item === button)
+  }
+  runSearch(state.scope)
+})
 $('refresh').addEventListener('click', () => location.reload())
 $('hard-reload').addEventListener('click', hardReload)
 
