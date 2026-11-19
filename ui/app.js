@@ -1,6 +1,8 @@
 // dsh-chat-lite 移动端前端（无框架）
 'use strict'
 
+const BUILD = '2025-11-19.13'
+
 const $ = (id) => document.getElementById(id)
 const el = {
   drawer: $('drawer'),
@@ -684,6 +686,22 @@ $('new-chat').addEventListener('click', newChat)
 $('new-chat-top').addEventListener('click', newChat)
 el.search.addEventListener('input', renderList)
 $('refresh').addEventListener('click', () => location.reload())
+$('hard-reload').addEventListener('click', hardReload)
+
+/**
+ * 卡在旧前端时的唯一可靠手段：注销 Service Worker、清空所有缓存，再带参数重进。
+ */
+async function hardReload() {
+  try {
+    const registrations = await navigator.serviceWorker.getRegistrations()
+    await Promise.all(registrations.map((item) => item.unregister()))
+    const keys = await caches.keys()
+    await Promise.all(keys.map((key) => caches.delete(key)))
+  } catch {
+    // 忽略：能清多少算多少
+  }
+  location.replace(location.pathname + '?fresh=' + Date.now())
+}
 
 // 消息区下拉刷新（页面本身不可滚动，所以自己实现）
 let pullStart = 0
@@ -927,7 +945,12 @@ window.addEventListener('offline', updateOnlineState)
 // Service Worker：离线壳 + 最近 3 天缓存
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('sw.js', { scope: './' }).catch(() => {
+    navigator.serviceWorker.register('sw.js', { scope: './' }).then((registration) => {
+      // 每次回到前台都查一次更新，避免长期卡在旧版本
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') registration.update().catch(() => {})
+      })
+    }).catch(() => {
       // https/localhost 之外注册会失败，属于预期
     })
   })
@@ -1020,6 +1043,8 @@ $('settings-entry').addEventListener('click', () => {
 })
 
 async function boot() {
+  const build = $('build')
+  if (build) build.textContent = 'v' + BUILD
   renderChips()
   renderSend()
   updateOnlineState()

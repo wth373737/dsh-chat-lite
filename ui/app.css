@@ -331,3 +331,4 @@ body {
   font-size: 12.5px; padding: 6px 14px; border-radius: 14px;
 }
 .load-earlier button:disabled { opacity: .5; }
+.build { margin-left: auto; font-size: 11px; color: var(--ink-3); }
