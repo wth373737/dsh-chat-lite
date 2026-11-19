@@ -1036,7 +1036,7 @@ export function registerMobile(ctx, config) {
                 yield bytes
               })(),
             })
-            return sendJson(res, 200, { ok: true, receiptId: value.receiptId, file: value.file })
+            return sendJson(res, 200, { ok: true, receiptId: value.receiptId, file: value.file, textPreview, pdfScanned })
           }
 
           // 读取已存图片（用于回显历史消息里的图片）

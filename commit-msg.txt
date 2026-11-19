@@ -1,6 +1,1 @@
-feat(preset): 闲聊预设加入 dsh-univer-office（Word/Excel/PPT 可读）
-
-feat(mobile): 扫描版 PDF 兜底提示
-
-- 抽到的文本过少（<200 字）时判定为扫描件，消息里提示模型让用户发截图
-- 图片模型可读，这是目前没有 OCR 时最实用的退路
+fix(mobile): 上传响应真正返回 textPreview/pdfScanned（上一处替换未命中）
