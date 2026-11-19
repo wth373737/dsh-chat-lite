@@ -34,9 +34,12 @@ const uploaded = await call('/upload-file', {
 })
 console.log('已上传:', JSON.stringify(uploaded.file), ' textPreview:', (uploaded.textPreview || '').length)
 
+const inline = uploaded.textPreview
+  ? '\n\n[附件 ' + name + ' 的文本内容]\n```\n' + uploaded.textPreview + '\n```'
+  : ''
 await call('/send', {
   sessionId: created.sessionId,
-  text: '这个文档里写了什么？把要点原样告诉我。',
+  text: '这个文档里写了什么？把要点原样告诉我。' + inline,
   files: [{ receiptId: uploaded.receiptId }],
 })
 console.log('已发送，等待…')

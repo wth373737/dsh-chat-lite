@@ -1,11 +1,9 @@
-feat(mobile): Word/Excel/PPT 文本由宿主直接提取（office.js），并撤掉 univer 插件
+fix(preset): 闲聊人设明确禁止为读附件调用工具；撤掉 tool-fs
 
-实测加入 dsh-univer-office 后，模型在闲聊里会乱试工具（win_bash 被沙箱拒绝 →
-terminal_open → univer_* → windows_desktop），一路空转，体验很差。
+实测（含撤掉 univer 之后）模型仍会尝试 win_bash / write / terminal_open / univer_new，
+因为这些工具是宿主全局可用、不受预设约束；沙箱又拒绝执行，于是空转。
 
-改为与 PDF 同样的思路：宿主解析 docx/pptx/xlsx（zip + XML）直接抽文本，
-拼进消息正文，模型无需任何工具即可阅读。
-
-- office.js：zip 中央目录解析 + inflateRaw + XML 抽字，无外部依赖
-- 上传时 .docx/.pptx/.xlsx 返回 textPreview
-- 新增 3 条测试（docx / xlsx / 未知类型），总计 18 项全过
+因此改为：
+- 人设直接写明「附件内容已在对话里，不要调用工具读取」
+- 撤掉 tool-fs（文本/PDF/Office 全部由宿主内联，模型无需读文件工具）
+- e2e 脚本改为与真实客户端一致（把 textPreview 拼进正文）
