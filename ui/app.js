@@ -526,6 +526,14 @@ async function boot() {
     toast('加载失败：' + error.message)
   }
   renderMessages()
+
+  // 测试/书签用深链：#drawer 打开抽屉；#s:<sessionId> 直接进会话
+  const hash = decodeURIComponent(location.hash || '')
+  if (hash === '#drawer') openDrawer()
+  if (hash.startsWith('#s:')) {
+    const id = hash.slice(3)
+    if (id) openSession(id)
+  }
 }
 
 boot()

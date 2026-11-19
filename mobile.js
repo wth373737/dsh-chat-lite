@@ -212,6 +212,8 @@ export function registerMobile(ctx, config) {
   if (!chatDir) return () => {}
 
   const auth = new MobileAuth(chatDir)
+  // 宿主这些方法需要 AbortSignal；随插件卸载统一取消
+  const lifetime = new AbortController()
 
   // 解析该目录对应的 workspaceId：这样新建的会话会出现在工作区里（也才会被自动归档看到）
   let workspaceId = null
@@ -323,7 +325,7 @@ export function registerMobile(ctx, config) {
 
           if (action === 'bootstrap') {
             const controller = ctx.sessionController
-            const listed = await controller.list({})
+            const listed = await controller.list({}, lifetime.signal)
             const items = (listed.items || []).filter((item) => item.cwd === chatDir && !item.origin)
             let catalog = null
             try {
@@ -354,7 +356,7 @@ export function registerMobile(ctx, config) {
             const sessionId = url.searchParams.get('sessionId') || ''
             const beforeSeq = url.searchParams.get('beforeSeq')
             const max = Number(url.searchParams.get('max') || '30')
-            const inspected = await ctx.sessionController.inspect(sessionId)
+            const inspected = await ctx.sessionController.inspect(sessionId, lifetime.signal)
             const events = inspected.events || []
             const lastSeq = events.length ? events[events.length - 1].seq : 0
             const value = await ctx.sessionController.page({
@@ -362,7 +364,7 @@ export function registerMobile(ctx, config) {
               throughSeq: lastSeq,
               ...(beforeSeq ? { beforeSeq: Number(beforeSeq) } : {}),
               maxMessages: max,
-            })
+            }, lifetime.signal)
             return sendJson(res, 200, { ok: true, ...value })
           }
 
@@ -374,7 +376,7 @@ export function registerMobile(ctx, config) {
               sessionId: body.sessionId,
               mode: 'queue',
               content: [{ type: 'text', text: String(body.text) }],
-            })
+            }, lifetime.signal)
             return sendJson(res, 200, { ok: true, ...value })
           }
 
@@ -514,7 +516,7 @@ export function registerMobile(ctx, config) {
 
   return () => {
     try {
-      disposeRoute()
+      lifetime.abort()
     } catch {
       // 忽略
     }
