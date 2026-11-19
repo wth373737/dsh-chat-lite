@@ -385,6 +385,9 @@ export function eventsToArchive(events) {
       continue
     }
     if (event.type === 'user/message') {
+      // 跳过 DSH 注入的运行时上下文/时间上下文（它们也是 user/message）
+      const kind = event.data && event.data.source && event.data.source.kind
+      if (kind && kind !== 'user') continue
       const { text } = splitBlocks(event.data && event.data.content)
       if (!text.trim()) continue
       turns++

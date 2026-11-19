@@ -45,6 +45,37 @@ const MIME = {
   '.webp': 'image/webp',
 }
 
+/** 只保留 UI 需要的事件字段，避免把工具结果/搜索原文整包发给手机。 */
+function slimRecords(records) {
+  const out = []
+  for (const record of records || []) {
+    const event = record && record.event
+    if (!event) continue
+    if (event.type === 'user/message') {
+      const source = (event.data && event.data.source) || {}
+      if (source.kind && source.kind !== 'user') continue
+      const content = ((event.data && event.data.content) || []).filter((part) => part && part.type === 'text')
+      if (!content.length) continue
+      out.push({ event: { type: event.type, seq: event.seq, time: event.time, data: { content, source: { kind: source.kind || 'user' } } } })
+    } else if (event.type === 'assistant/message') {
+      const blocks = (event.data && event.data.message && event.data.message.content) || []
+      const content = blocks.filter((part) => part && (part.type === 'text' || part.type === 'reasoning'))
+      if (!content.length) continue
+      out.push({
+        event: {
+          type: event.type,
+          seq: event.seq,
+          time: event.time,
+          data: { message: { content }, usage: event.data && event.data.usage },
+        },
+      })
+    } else if (event.type === 'tool/call') {
+      out.push({ event: { type: event.type, seq: event.seq, time: event.time, data: { name: event.data && event.data.name } } })
+    }
+  }
+  return out
+}
+
 async function sendFile(res, file) {
   try {
     const data = await readFile(file)
@@ -365,7 +396,7 @@ export function registerMobile(ctx, config) {
               ...(beforeSeq ? { beforeSeq: Number(beforeSeq) } : {}),
               maxMessages: max,
             }, lifetime.signal)
-            return sendJson(res, 200, { ok: true, ...value })
+            return sendJson(res, 200, { ok: true, records: slimRecords(value.records), hasMore: value.hasMore })
           }
 
           if (action === 'send') {

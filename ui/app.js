@@ -31,6 +31,7 @@ const state = {
   web: localStorage.getItem('chat-lite:web') !== '0',
   source: null,
   live: null,
+  static: false,
 }
 
 const EFFORT_LABEL = { max: '极', high: '高', low: '低', off: '关' }
@@ -176,12 +177,17 @@ function buildMessages(records) {
     const event = record && record.event ? record.event : null
     if (!event) continue
     if (event.type === 'user/message') {
+      const kind = event.data && event.data.source && event.data.source.kind
+      if (kind && kind !== 'user') continue
       const text = (event.data && event.data.content || [])
         .filter((part) => part && part.type === 'text')
         .map((part) => part.text)
         .join('')
       if (!text.trim()) continue
       out.push({ role: 'user', seq: event.seq, text })
+    } else if (event.type === 'tool/call') {
+      const name = String((event.data && event.data.name) || 'tool')
+      out.push({ role: 'tool', seq: event.seq, name })
     } else if (event.type === 'assistant/message') {
       const content = (event.data && event.data.message && event.data.message.content) || []
       const text = content.filter((part) => part.type === 'text').map((part) => part.text).join('')
@@ -204,8 +210,25 @@ function messageHtml(message, index) {
     actionBtn('delete', '删除该段', index) +
     '</div>'
 
+  if (message.role === 'tool') {
+    const label = /web_search/.test(message.name)
+      ? '🌐 联网搜索'
+      : /web_fetch/.test(message.name)
+        ? '🌐 读取网页'
+        : '🔧 ' + message.name
+    return '<div class="msg tool"><span class="tool-chip">' + escapeHtml(label) + '</span></div>'
+  }
+
   if (message.role === 'user') {
-    return '<div class="msg user"><div class="bubble">' + escapeHtml(message.text) + '</div></div>'
+    return (
+      '<div class="msg user">' +
+      '<div class="user-col">' +
+      '<div class="bubble">' + escapeHtml(message.text) + '</div>' +
+      '<div class="actions user-actions">' +
+      actionBtn('copy', '复制', index) +
+      actionBtn('edit', '修改', index) +
+      '</div></div></div>'
+    )
   }
 
   const thinking = message.thinking
@@ -271,7 +294,7 @@ async function openSession(id) {
     state.records = data.records || []
     state.messages = buildMessages(state.records)
     renderMessages()
-    startFollow(id)
+    if (!state.static) startFollow(id)
     renderList()
   } catch (error) {
     toast('打开失败：' + error.message)
@@ -531,7 +554,9 @@ async function boot() {
   const hash = decodeURIComponent(location.hash || '')
   if (hash === '#drawer') openDrawer()
   if (hash.startsWith('#s:')) {
-    const id = hash.slice(3)
+    const raw = hash.slice(3)
+    state.static = raw.includes('static')
+    const id = raw.split('&')[0]
     if (id) openSession(id)
   }
 }
