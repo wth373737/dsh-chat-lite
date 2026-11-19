@@ -165,6 +165,37 @@ async function readLocalImage(chatDir, attachmentId) {
   return null
 }
 
+/** 下发首页时把 app.js/app.css 的 URL 换成内容版本号，旧缓存永远命中不了。 */
+async function sendIndex(res) {
+  try {
+    const html = await readFile(path.join(UI_DIR, 'index.html'), 'utf8')
+    const stampOf = async (name) => {
+      try {
+        const stat = await statMtime(path.join(UI_DIR, name))
+        return String(stat)
+      } catch {
+        return '0'
+      }
+    }
+    const jsStamp = await stampOf('app.js')
+    const cssStamp = await stampOf('app.css')
+    const body = html
+      .replace(/ui\/app\.js(\?v=[^"']*)?/, 'ui/app.js?v=' + jsStamp)
+      .replace(/ui\/app\.css(\?v=[^"']*)?/, 'ui/app.css?v=' + cssStamp)
+      .replace('__BUILD__', jsStamp)
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' })
+    res.end(body)
+  } catch {
+    sendText(res, 500, 'index.html 读取失败')
+  }
+}
+
+async function statMtime(file) {
+  const { stat } = await import('node:fs/promises')
+  const info = await stat(file)
+  return info.mtimeMs
+}
+
 async function sendFile(res, file) {
   try {
     const data = await readFile(file)
@@ -417,7 +448,19 @@ export function registerMobile(ctx, config) {
               res.writeHead(302, { location: mount + '/' })
               return res.end()
             }
-            return sendFile(res, path.join(UI_DIR, 'index.html'))
+            return sendIndex(res)
+          }
+
+          // 版本自检：在浏览器里直接打开即可确认走的是不是最新代码
+          if (req.method === 'GET' && sub === '/__version') {
+            const { stat } = await import('node:fs/promises')
+            let stamp = 0
+            try {
+              stamp = (await stat(path.join(UI_DIR, 'app.js'))).mtimeMs
+            } catch {
+              stamp = 0
+            }
+            return sendText(res, 200, 'chat-lite build=' + stamp + '\nmount=' + mount + '\n', 'text/plain; charset=utf-8')
           }
 
           // Service Worker 必须挂在作用域根部，否则控制不到 /chat-lite/m/

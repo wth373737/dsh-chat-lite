@@ -1043,6 +1043,7 @@ $('settings-entry').addEventListener('click', () => {
 })
 
 async function boot() {
+  document.title = '闲聊 v' + BUILD
   const build = $('build')
   if (build) build.textContent = 'v' + BUILD
   renderChips()
