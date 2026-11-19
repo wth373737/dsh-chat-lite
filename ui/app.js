@@ -96,6 +96,9 @@ const state = {
   liveText: '',
   liveThinking: '',
   hasMore: false,
+  readOnly: false,        // 历史记录只读
+  historyCursor: 0,
+  historyHasMore: false,
   earliestSeq: 0,
   pendingImages: [],   // [{ attachment, dataUrl }]
   pinned: new Set(JSON.parse(localStorage.getItem('chat-lite:pinned') || '[]')),
@@ -262,11 +265,41 @@ function renderList() {
         '</div>'
     }
   }
+  if (state.historyHasMore) {
+    html += '<div class="load-earlier"><button type="button" id="load-more-history">加载更多历史</button></div>'
+  }
   el.list.innerHTML = html
+}
+
+/** 继续取下一页历史库（按更新时间倒序）。 */
+async function loadMoreHistory() {
+  const rows = state.sessions.filter((item) => item.kind === 'history')
+  const cursor = rows.length ? rows[rows.length - 1].updatedAt : state.historyCursor
+  const button = $('load-more-history')
+  if (button) button.disabled = true
+  try {
+    const data = await api('history?limit=60&before=' + encodeURIComponent(cursor))
+    const liveIds = new Set(state.sessions.filter((item) => item.kind !== 'history').map((item) => item.id))
+    const more = (data.items || [])
+      .filter((item) => !liveIds.has(item.id))
+      .filter((item) => !state.sessions.some((existing) => existing.id === item.id))
+      .map((item) => ({ ...item, kind: 'history' }))
+    state.sessions = state.sessions.concat(more)
+    state.historyHasMore = Boolean(data.hasMore)
+    renderList()
+  } catch (error) {
+    toast('加载历史失败：' + error.message)
+  }
 }
 
 async function loadList() {
   const data = await api('bootstrap')
+  let history = { items: [], hasMore: false }
+  try {
+    history = await api('history?limit=60')
+  } catch {
+    history = { items: [], hasMore: false }
+  }
   state.pinned = new Set((data.sessions || []).filter((item) => item.pinned).map((item) => item.id))
   state.sessions = (data.sessions || [])
     .filter((item) => !item.blank)   // 隐藏空会话（惰性新建后不应该再出现）
@@ -274,6 +307,13 @@ async function loadList() {
       ...item,
       title: item.title || '新对话',
     }))
+  // 合并历史库（同 id 以 DSH 会话为准，避免重复）
+  const liveIds = new Set(state.sessions.map((item) => item.id))
+  const historyRows = (history.items || [])
+    .filter((item) => !liveIds.has(item.id))
+    .map((item) => ({ ...item, kind: 'history' }))
+  state.sessions = state.sessions.concat(historyRows)
+  state.historyHasMore = Boolean(history.hasMore)
   renderList()
 }
 
@@ -310,8 +350,9 @@ function buildMessages(records) {
 }
 
 function messageHtml(message, index) {
-  const actions =
-    '<div class="actions">' +
+  const actions = message.readOnly
+    ? ''
+    : '<div class="actions">' +
     actionBtn('copy', '复制', index) +
     actionBtn('edit', '修改', index) +
     actionBtn('speak', '朗读', index, true) +
@@ -319,6 +360,11 @@ function messageHtml(message, index) {
     actionBtn('branch', '分支', index) +
     actionBtn('delete', '删除该段', index) +
     '</div>'
+  if (message.readOnly) {
+    return (
+      '<div class="msg assistant"><div class="body">' + renderMarkdown(message.text) + '</div></div>'
+    )
+  }
 
   if (message.role === 'tool') {
     const label = /web_search/.test(message.name)
@@ -471,6 +517,8 @@ async function loadEarlier() {
 
 async function openSession(id) {
   closeDrawer()
+  state.readOnly = false
+  renderReadOnlyBar(false)
   const session = state.sessions.find((item) => item.id === id)
   state.current = session || { id }
   setTitle(session ? session.title : '对话')
@@ -487,6 +535,75 @@ async function openSession(id) {
     renderList()
   } catch (error) {
     toast('打开失败：' + error.message)
+  }
+}
+
+/** 打开历史库里的会话（只读）。 */
+async function openHistory(id) {
+  closeDrawer()
+  stopFollow()
+  const row = state.sessions.find((item) => item.id === id)
+  state.current = { id, kind: 'history', title: row ? row.title : '历史对话' }
+  state.readOnly = true
+  setTitle((row && row.title) || '历史对话')
+  try {
+    const data = await api('history-item?id=' + encodeURIComponent(id))
+    state.messages = (data.messages || []).map((message) => ({
+      role: message.role,
+      text: message.text,
+      thinking: message.thinking,
+      readOnly: message.role === 'assistant',
+    }))
+    state.hasMore = false
+    renderMessages()
+    renderReadOnlyBar(true)
+  } catch (error) {
+    toast('打开历史失败：' + error.message)
+  }
+  renderList()
+}
+
+/** 只读提示条：显示在输入框位置上方。 */
+function renderReadOnlyBar(show) {
+  let bar = $('readonly-bar')
+  if (!bar) {
+    bar = document.createElement('div')
+    bar.id = 'readonly-bar'
+    bar.className = 'readonly-bar'
+    document.body.appendChild(bar)
+  }
+  bar.hidden = !show
+  if (!show) return
+  bar.innerHTML = ''
+  const text = document.createElement('span')
+  text.textContent = '历史记录（只读）'
+  bar.appendChild(text)
+  const button = document.createElement('button')
+  button.type = 'button'
+  button.textContent = '继续对话'
+  button.addEventListener('click', () => continueFromHistory())
+  bar.appendChild(button)
+}
+
+/** 基于历史记录新建一个会话并继续。 */
+async function continueFromHistory() {
+  if (!state.current || state.current.kind !== 'history') return
+  const transcript = state.messages
+    .filter((message) => message.text)
+    .map((message) => (message.role === 'user' ? '用户：' : '助手：') + message.text)
+    .join('\n\n')
+    .slice(0, 20000)
+  try {
+    const created = await api('new', { method: 'POST', body: {} })
+    showDialog({ title: '已新建会话', text: '历史内容会作为第一条消息发送，之后可以继续聊。', confirm: '继续', mode: 'confirm' })
+    const prompt = '以下是我之前的一段对话记录，请据此了解上下文，之后我们继续聊：\n\n' + transcript
+    await api('send', { method: 'POST', body: { sessionId: created.sessionId, text: prompt } })
+    await loadList()
+    state.readOnly = false
+    renderReadOnlyBar(false)
+    await openSession(created.sessionId)
+  } catch (error) {
+    toast('继续对话失败：' + error.message)
   }
 }
 
@@ -601,6 +718,10 @@ async function ensureSession() {
 }
 
 async function sendMessage() {
+  if (state.readOnly) {
+    toast('这是历史记录，点「继续对话」后可以继续聊')
+    return
+  }
   const text = el.input.value.trim()
   if (!text) return
   if (state.running) return
@@ -873,6 +994,10 @@ el.list.addEventListener('click', (event) => {
   if (more) {
     event.stopPropagation()
     openSessionMenu(more.dataset.more)
+    return
+  }
+  if (event.target.closest('#load-more-history')) {
+    loadMoreHistory()
     return
   }
   const row = event.target.closest('.row')

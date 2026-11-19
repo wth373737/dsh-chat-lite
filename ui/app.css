@@ -332,3 +332,13 @@ body {
 }
 .load-earlier button:disabled { opacity: .5; }
 .build { margin-left: auto; font-size: 11px; color: var(--ink-3); }
+.readonly-bar {
+  display: flex; align-items: center; gap: 8px;
+  margin: 0 12px 6px; padding: 8px 12px; border-radius: 12px;
+  background: var(--brand-soft); color: var(--ink-2); font-size: 12.5px;
+}
+.readonly-bar span { flex: 1; }
+.readonly-bar button {
+  border: 0; height: 30px; padding: 0 14px; border-radius: 15px;
+  background: var(--brand); color: #fff; font-size: 12.5px;
+}
