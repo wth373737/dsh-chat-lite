@@ -301,3 +301,33 @@ body {
 }
 .pairing-btn:disabled { opacity: .6; }
 .pairing-msg { margin-top: 10px; font-size: 12.5px; color: var(--err); min-height: 18px; }
+/* ── 页面内弹窗（PWA 里 prompt/confirm 会被拦，不能用原生）──────── */
+.dialog {
+  position: fixed; inset: 0; z-index: 80;
+  background: rgba(0,0,0,.38);
+  display: flex; align-items: center; justify-content: center; padding: 24px;
+}
+.dialog-card {
+  width: 100%; max-width: 360px; background: var(--panel);
+  border-radius: 16px; padding: 18px 16px 12px;
+}
+.dialog-title { font-size: 16px; font-weight: 600; margin-bottom: 10px; }
+.dialog-text { font-size: 14px; color: var(--ink-2); line-height: 1.7; white-space: pre-wrap; }
+.dialog textarea {
+  width: 100%; border: 1px solid var(--line); border-radius: 10px;
+  background: var(--bg); color: var(--ink); padding: 8px 10px;
+  font: inherit; font-size: 14px; resize: none; outline: none;
+}
+.dialog-actions { display: flex; gap: 8px; margin-top: 14px; }
+.dialog-btn {
+  flex: 1; height: 42px; border: 1px solid var(--line); border-radius: 21px;
+  background: transparent; color: var(--ink); font-size: 15px;
+}
+.dialog-btn.primary { background: var(--brand); border-color: var(--brand); color: #fff; }
+.dialog-btn.danger { background: var(--err); border-color: var(--err); color: #fff; }
+.load-earlier { display: flex; justify-content: center; padding: 4px 0 8px; }
+.load-earlier button {
+  border: 1px solid var(--line); background: var(--panel); color: var(--ink-2);
+  font-size: 12.5px; padding: 6px 14px; border-radius: 14px;
+}
+.load-earlier button:disabled { opacity: .5; }

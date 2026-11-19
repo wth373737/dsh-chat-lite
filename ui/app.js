@@ -43,6 +43,8 @@ const state = {
   editing: null,   // { atSeq, text } 修改用户消息时使用
   liveText: '',
   liveThinking: '',
+  hasMore: false,
+  earliestSeq: 0,
   pendingImages: [],   // [{ attachment, dataUrl }]
   pinned: new Set(JSON.parse(localStorage.getItem('chat-lite:pinned') || '[]')),
   hidden: new Set(JSON.parse(localStorage.getItem('chat-lite:hidden') || '[]')),
@@ -358,7 +360,9 @@ function iconSvg(kind) {
   return '<svg viewBox="0 0 24 24" class="icon">' + (paths[kind] || '') + '</svg>'
 }
 
-function renderMessages() {
+function renderMessages(keepScroll) {
+  const previousHeight = el.messages.scrollHeight
+  const previousTop = el.messages.scrollTop
   const hasAny = state.messages.length > 0
   el.empty.hidden = hasAny || Boolean(state.current)
   el.messages.hidden = !hasAny
@@ -372,11 +376,44 @@ function renderMessages() {
         '</div>'
       : '<div class="msg assistant"><div class="typing"><span></span><span></span><span></span></div></div>'
     : ''
-  el.messages.innerHTML = state.messages.map(messageHtml).join('') + typing
+  const earlier = state.hasMore && state.current
+    ? '<div class="load-earlier"><button type="button" id="load-earlier">加载更早的消息</button></div>'
+    : ''
+  el.messages.innerHTML = earlier + state.messages.map(messageHtml).join('') + typing
   if (hasAny) {
     requestAnimationFrame(() => {
-      el.messages.scrollTop = el.messages.scrollHeight
+      if (keepScroll) {
+        el.messages.scrollTop = el.messages.scrollHeight - previousHeight + previousTop
+      } else {
+        el.messages.scrollTop = el.messages.scrollHeight
+      }
     })
+  }
+}
+
+/** 向上翻页：取更早的一页并接在前面。 */
+async function loadEarlier() {
+  if (!state.current || !state.earliestSeq) return
+  const button = $('load-earlier')
+  if (button) button.disabled = true
+  try {
+    const data = await api(
+      'page?sessionId=' + encodeURIComponent(state.current.id) +
+      '&beforeSeq=' + encodeURIComponent(state.earliestSeq) + '&max=40',
+    )
+    const records = data.records || []
+    if (!records.length) {
+      state.hasMore = false
+      renderMessages(true)
+      return
+    }
+    const older = buildMessages(records)
+    state.messages = older.concat(state.messages)
+    state.earliestSeq = records[0].event.seq
+    state.hasMore = Boolean(data.hasMore)
+    renderMessages(true)
+  } catch (error) {
+    toast('加载失败：' + error.message)
   }
 }
 
@@ -391,6 +428,8 @@ async function openSession(id) {
     const data = await api('page?sessionId=' + encodeURIComponent(id) + '&max=40')
     state.records = data.records || []
     state.messages = buildMessages(state.records)
+    state.hasMore = Boolean(data.hasMore)
+    state.earliestSeq = state.records.length ? state.records[0].event.seq : 0
     renderMessages()
     if (!state.static) startFollow(id)
     renderList()
@@ -611,6 +650,8 @@ async function toggleWeb() {
 
 // ── 抽屉 ─────────────────────────────────────────────────
 function openDrawer() {
+  // 每次打开抽屉都静默拉一次列表（新会话、标题变化不用手动刷新）
+  loadList().catch(() => {})
   el.drawer.classList.add('open')
   el.drawer.setAttribute('aria-hidden', 'false')
   el.scrim.hidden = false
@@ -692,6 +733,10 @@ el.list.addEventListener('click', (event) => {
 })
 
 el.messages.addEventListener('click', async (event) => {
+  if (event.target.closest('#load-earlier')) {
+    loadEarlier()
+    return
+  }
   const thinking = event.target.closest('[data-thinking]')
   if (thinking) {
     const index = thinking.dataset.thinking
@@ -889,6 +934,46 @@ if ('serviceWorker' in navigator) {
 }
 
 // ── 启动 ─────────────────────────────────────────────────
+let dialogResolve = null
+
+/** 页面内弹窗：mode='input' 改名，mode='confirm' 确认。返回 Promise<值|null> */
+function showDialog(options) {
+  const { title, value = '', placeholder = '', text = '', confirm = '确定', danger = false, mode = 'input' } = options
+  el.dialogTitle.textContent = title || ''
+  el.dialogText.hidden = mode !== 'confirm'
+  el.dialogText.textContent = text
+  el.dialogInput.hidden = mode !== 'input'
+  el.dialogInput.value = value
+  el.dialogInput.placeholder = placeholder
+  el.dialogOk.textContent = confirm
+  el.dialogOk.className = 'dialog-btn ' + (danger ? 'danger' : 'primary')
+  el.dialog.hidden = false
+  if (mode === 'input') {
+    setTimeout(() => {
+      el.dialogInput.focus()
+      el.dialogInput.setSelectionRange(el.dialogInput.value.length, el.dialogInput.value.length)
+    }, 60)
+  }
+  return new Promise((resolve) => {
+    dialogResolve = resolve
+  })
+}
+
+function closeDialog(result) {
+  el.dialog.hidden = true
+  const resolve = dialogResolve
+  dialogResolve = null
+  if (resolve) resolve(result)
+}
+
+el.dialogOk.addEventListener('click', () => {
+  closeDialog(el.dialogInput.hidden ? true : el.dialogInput.value.trim())
+})
+el.dialogCancel.addEventListener('click', () => closeDialog(null))
+el.dialog.addEventListener('click', (event) => {
+  if (event.target === el.dialog) closeDialog(null)
+})
+
 function showPairing(message) {
   el.pairing.hidden = false
   el.pairingMsg.textContent = message || ''
