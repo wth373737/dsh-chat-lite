@@ -15,6 +15,7 @@ import { randomBytes, createHash } from 'node:crypto'
 import { readFile, writeFile, mkdir } from 'node:fs/promises'
 import path from 'node:path'
 import { networkInterfaces } from 'node:os'
+import { createServer } from 'node:http'
 
 const MOUNT = '/chat-lite/m'
 const COOKIE_NAME = 'chat_lite_dev'
@@ -90,9 +91,10 @@ function lanHosts() {
 }
 
 /** 由请求 Host 推导端口，再拼出局域网可用的配对链接。 */
-function mobileUrls(req, token) {
+function mobileUrls(req, token, fixedPort) {
   const host = String(req.headers.host || '')
-  const port = host.includes(':') ? host.slice(host.lastIndexOf(':') + 1) : '80'
+  const hostPort = host.includes(':') ? host.slice(host.lastIndexOf(':') + 1) : '80'
+  const port = String(fixedPort || hostPort)
   const urls = lanHosts().map((ip) => 'http://' + ip + ':' + port + MOUNT + '/?t=' + token)
   urls.push('http://' + host + MOUNT + '/?t=' + token)
   return urls
@@ -222,11 +224,10 @@ export function registerMobile(ctx, config) {
     return device
   }
 
-  return ctx.effect(() =>
-    ctx.webServer.register({
-      kind: 'prefix',
-      path: MOUNT,
-      handler: async (req, res) => {
+  // 固定端口：手机地址不随 DSH 重启变化（DSH 自己每次都换随机端口）
+  const portRef = { value: Number(config.mobilePort || 8787) }
+
+  const handler = async (req, res) => {
         const url = new URL(req.url || '/', 'http://localhost')
         const sub = url.pathname.slice(MOUNT.length)
 
@@ -262,7 +263,7 @@ export function registerMobile(ctx, config) {
               ok: true,
               token: state.token,
               url: 'http://' + host + MOUNT + '/?t=' + state.token,
-              urls: mobileUrls(req, state.token),
+              urls: mobileUrls(req, state.token, portRef.value),
               devices: state.devices.map((item) => ({
                 id: item.id,
                 label: item.label,
@@ -284,7 +285,7 @@ export function registerMobile(ctx, config) {
               ok: true,
               token,
               url: 'http://' + host + MOUNT + '/?t=' + token,
-              urls: mobileUrls(req, token),
+              urls: mobileUrls(req, token, portRef.value),
             })
           }
 
@@ -404,9 +405,63 @@ export function registerMobile(ctx, config) {
             }
           }
         }
-      },
-    }),
+  }
+
+  // 1) 挂在 DSH 自己的 webServer 上（同源访问，桌面浏览器用）
+  const disposeRoute = ctx.effect(() =>
+    ctx.webServer.register({ kind: 'prefix', path: MOUNT, handler }),
   )
+
+  // 2) 关键：一个固定端口的独立监听，让手机地址不随 DSH 重启变化
+  let listening = 0
+  let server = null
+  const disposeServer = ctx.effect(() => {
+    const tryListen = (port, attempt) => {
+      const candidate = createServer((req, res) => {
+        Promise.resolve(handler(req, res)).catch(() => {
+          try {
+            res.destroy()
+          } catch {
+            // 忽略
+          }
+        })
+      })
+      candidate.on('error', (error) => {
+        if (error && error.code === 'EADDRINUSE' && attempt < 5) {
+          tryListen(port + 1, attempt + 1)
+          return
+        }
+        process.stderr.write('[chat-lite] 移动端端口监听失败: ' + String((error && error.message) || error) + '\n')
+      })
+      candidate.listen(port, '0.0.0.0', () => {
+        listening = port
+        portRef.value = port
+        server = candidate
+        process.stderr.write('[chat-lite] 移动端已就绪: http://0.0.0.0:' + port + MOUNT + '/\n')
+      })
+    }
+    tryListen(portRef.value, 0)
+    return () => {
+      try {
+        if (server) server.close()
+      } catch {
+        // 忽略
+      }
+    }
+  })
+
+  return () => {
+    try {
+      disposeRoute()
+    } catch {
+      // 忽略
+    }
+    try {
+      disposeServer()
+    } catch {
+      // 忽略
+    }
+  }
 }
 
 /** 极简占位页：等 UI 定稿后替换。 */
