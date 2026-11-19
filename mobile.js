@@ -12,7 +12,7 @@
 // 与官方 Web UI 用的是同一套会话，不复制数据。
 
 import { randomBytes, createHash } from 'node:crypto'
-import { readFile, writeFile, mkdir } from 'node:fs/promises'
+import { readFile, writeFile, mkdir, readdir } from 'node:fs/promises'
 import { statSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -194,6 +194,134 @@ async function statMtime(file) {
   const { stat } = await import('node:fs/promises')
   const info = await stat(file)
   return info.mtimeMs
+}
+
+
+// ── 历史库（.chat-lite）查询 ─────────────────────────────────────────────
+const HISTORY_DEFAULT_MONTHS = 3
+const SEARCH_CHUNK_LIMIT = 40
+
+const historyDir = (chatDir) => path.join(chatDir, '.chat-lite')
+
+/** 读取 index.jsonl（每行一条会话摘要）。 */
+async function readHistoryIndex(chatDir) {
+  const file = path.join(historyDir(chatDir), 'index.jsonl')
+  const raw = await readFile(file, 'utf8')
+  const rows = []
+  for (const line of raw.split('\n')) {
+    const text = line.trim()
+    if (!text) continue
+    try {
+      rows.push(JSON.parse(text))
+    } catch {
+      // 跳过坏行
+    }
+  }
+  return rows
+}
+
+/** 把索引行转成移动端需要的形状。 */
+function toHistoryItem(row) {
+  return {
+    id: String(row.id),
+    title: String(row.title || row.first || '未命名对话').slice(0, 80),
+    updatedAt: Date.parse(row.updated || row.inserted || 0) || 0,
+    messages: Number(row.messages || 0),
+    source: row.source || 'import',
+    preview: String(row.first || '').slice(0, 120),
+  }
+}
+
+/** 历史会话正文。 */
+async function readHistoryItem(chatDir, id) {
+  const safe = String(id || '').replace(/[^\w.-]/g, '')
+  if (!safe) return null
+  const file = path.join(historyDir(chatDir), 'sessions', safe + '.jsonl')
+  const raw = await readFile(file, 'utf8')
+  const messages = []
+  let meta = null
+  for (const line of raw.split('\n')) {
+    const text = line.trim()
+    if (!text) continue
+    let row
+    try {
+      row = JSON.parse(text)
+    } catch {
+      continue
+    }
+    if (row.kind === 'meta') {
+      meta = row
+      continue
+    }
+    if (row.role === 'user' || row.role === 'assistant') {
+      messages.push({
+        role: row.role,
+        ts: Date.parse(row.ts || 0) || 0,
+        text: String(row.text || ''),
+        thinking: row.thinking ? String(row.thinking) : '',
+        files: Array.isArray(row.files) ? row.files : [],
+      })
+    }
+  }
+  return { meta, messages }
+}
+
+/** 全文搜索：按分块从新到旧扫描，命中即收集，达到上限提前结束。 */
+async function searchHistoryFull(chatDir, query, limit) {
+  const dir = path.join(historyDir(chatDir), 'search')
+  let names = []
+  try {
+    names = (await readdir(dir)).filter((name) => /^c\d+\.jsonl$/.test(name)).sort().reverse()
+  } catch {
+    names = []
+  }
+  if (names.length > SEARCH_CHUNK_LIMIT) names = names.slice(0, SEARCH_CHUNK_LIMIT)
+
+  const needle = query.toLowerCase()
+  const hits = []
+  const seen = new Set()
+
+  const scan = async (fileName) => {
+    let raw
+    try {
+      raw = await readFile(path.join(dir, fileName), 'utf8')
+    } catch {
+      return
+    }
+    for (const line of raw.split('\n')) {
+      const text = line.trim()
+      if (!text) continue
+      let row
+      try {
+        row = JSON.parse(text)
+      } catch {
+        continue
+      }
+      const haystack = String(row.t || '')
+      const at = haystack.toLowerCase().indexOf(needle)
+      if (at < 0) continue
+      const id = String(row.id || '')
+      if (seen.has(id)) continue
+      seen.add(id)
+      const start = Math.max(0, at - 40)
+      const snippet = haystack.slice(start, Math.min(haystack.length, at + needle.length + 80)).replace(/\s+/g, ' ')
+      hits.push({ id, snippet })
+      if (hits.length >= limit) return
+    }
+  }
+
+  for (const name of names) {
+    await scan(name)
+    if (hits.length >= limit) break
+  }
+  if (hits.length < limit) {
+    try {
+      await scan('live.jsonl')
+    } catch {
+      // 忽略
+    }
+  }
+  return hits
 }
 
 async function sendFile(res, file) {
@@ -491,6 +619,72 @@ export function registerMobile(ctx, config) {
 
           // 令牌信息（仅 loopback）：用于桌面端复制配对链接
           // App 内配对：粘贴配对码/链接后在此换取设备 Cookie
+
+          // 历史库列表（默认最近 3 个月，滚动时用 before 游标继续取）
+          if (action === 'history') {
+            const limit = Math.min(100, Number(url.searchParams.get('limit') || 60))
+            const beforeCursor = Number(url.searchParams.get('before') || 0)
+            const all = url.searchParams.get('all') === '1'
+            const rows = await readHistoryIndex(chatDir)
+            const cutoff = all ? 0 : Date.now() - HISTORY_DEFAULT_MONTHS * 30 * 86400000
+            let items = rows
+              .map(toHistoryItem)
+              .filter((item) => item.updatedAt >= cutoff)
+            items.sort((a, b) => b.updatedAt - a.updatedAt)
+            if (beforeCursor) items = items.filter((item) => item.updatedAt < beforeCursor)
+            const page = items.slice(0, limit)
+            return sendJson(res, 200, {
+              ok: true,
+              items: page,
+              hasMore: items.length > page.length,
+              total: rows.length,
+              cutoff,
+            })
+          }
+
+          // 历史会话正文（只读）
+          if (action === 'history-item') {
+            const id = url.searchParams.get('id') || ''
+            const data = await readHistoryItem(chatDir, id)
+            if (!data) return sendJson(res, 404, { ok: false, error: '找不到历史会话' })
+            return sendJson(res, 200, {
+              ok: true,
+              id,
+              title: (data.meta && data.meta.title) || '',
+              messages: data.messages,
+            })
+          }
+
+          // 搜索：scope=title 只查标题与首句；scope=full 扫全文分块
+          if (action === 'search') {
+            const query = String(url.searchParams.get('q') || '').trim()
+            const scope = url.searchParams.get('scope') === 'full' ? 'full' : 'title'
+            const limit = Math.min(60, Number(url.searchParams.get('limit') || 30))
+            if (!query) return sendJson(res, 200, { ok: true, items: [], scope })
+            const rows = await readHistoryIndex(chatDir)
+            const byId = new Map(rows.map((row) => [String(row.id), row]))
+            if (scope === 'title') {
+              const needle = query.toLowerCase()
+              const items = rows
+                .filter((row) => String(row.title || row.first || '').toLowerCase().includes(needle))
+                .map((row) => ({ ...toHistoryItem(row), snippet: String(row.first || '').slice(0, 120) }))
+                .sort((a, b) => b.updatedAt - a.updatedAt)
+                .slice(0, limit)
+              return sendJson(res, 200, { ok: true, items, scope })
+            }
+            const hits = await searchHistoryFull(chatDir, query, limit)
+            const items = hits.map((hit) => {
+              const row = byId.get(hit.id)
+              return {
+                id: hit.id,
+                snippet: hit.snippet,
+                title: row ? String(row.title || row.first || '未命名对话') : '未命名对话',
+                updatedAt: row ? toHistoryItem(row).updatedAt : 0,
+              }
+            })
+            return sendJson(res, 200, { ok: true, items, scope })
+          }
+
           if (action === 'pair') {
             const body = await readBody(req)
             const raw = String(body.token || '').trim()

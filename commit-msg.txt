@@ -1,7 +1,5 @@
-fix(mobile): 恢复会话菜单实现、错误条可关闭、serviceWorker 判断加固、加 UI 冒烟检查
+feat(mobile): 历史库查询接口（列表 / 正文 / 搜索）
 
-- openSessionMenu/runSessionOp/closeMenu 在重写 newChat 时整块丢失，导致点 ⋯ 报 ReferenceError
-- 错误提示改为底部小条，可关闭，不再遮挡界面
-- navigator.serviceWorker 改为检查对象本身（属性存在但值为空时同样会崩）
-- 新增 tools/check-ui.mjs：最小 DOM 桩执行 app.js，捕获白屏类问题；
-  并接入 npm run check（CI 也会跑）
+- GET api/history：读 .chat-lite/index.jsonl，默认最近 3 个月，before 游标分页
+- GET api/history-item：读归档会话正文（用户/助手/思考/附件名）
+- GET api/search?scope=title|full：标题匹配或扫全文分块（新到旧，命中上限即停）
