@@ -1,1 +1,4 @@
-fix(mobile): 上传响应真正返回 textPreview/pdfScanned（上一处替换未命中）
+fix(mobile): 上传响应返回 textPreview/pdfScanned；导出 extractPdfText 并加两条回归测试
+
+上一处替换未命中，导致 PDF 抽了文本却没返回给前端（白抽）。
+现在上传响应带 textPreview 与 pdfScanned，并有最小 PDF 的提取测试兜底。

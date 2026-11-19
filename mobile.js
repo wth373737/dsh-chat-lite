@@ -365,7 +365,7 @@ async function searchHistoryFull(chatDir, query, limit) {
 
 
 /** 极简 PDF 文本提取：解压 FlateDecode 流，按定位操作符分段抽取文本。 */
-function extractPdfText(buffer, maxChars) {
+export function extractPdfText(buffer, maxChars) {
   const streams = []
   let index = 0
   while ((index = buffer.indexOf('stream', index)) !== -1) {

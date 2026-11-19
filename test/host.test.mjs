@@ -254,3 +254,27 @@ test('MobileAuth：令牌可换设备 Cookie，重启后仍有效，撤销后失
   assert.notEqual(fresh, token)
   assert.equal(await restarted.verify(granted.cookie), null)
 })
+// ── PDF 文本提取：构造一个最小 PDF，验证能抽出文字 ──────────────────
+test('extractPdfText 能从压缩流里抽出文字', async () => {
+  const { extractPdfText } = await import('../mobile.js')
+  const { deflateSync } = await import('node:zlib')
+
+  const content = 'BT /F1 12 Tf 72 720 Td (Hello PDF 42) Tj ET'
+  const compressed = deflateSync(Buffer.from(content, 'latin1'))
+
+  const parts = []
+  parts.push(Buffer.from('%PDF-1.4\n', 'latin1'))
+  parts.push(Buffer.from('1 0 obj\n<< /Length ' + compressed.length + ' /Filter /FlateDecode >>\nstream\n', 'latin1'))
+  parts.push(compressed)
+  parts.push(Buffer.from('\nendstream\nendobj\n%%EOF\n', 'latin1'))
+  const pdf = Buffer.concat(parts)
+
+  const text = extractPdfText(pdf, 1000)
+  assert.match(text, /Hello PDF 42/)
+})
+
+test('extractPdfText 对无文字内容返回空串', async () => {
+  const { extractPdfText } = await import('../mobile.js')
+  const pdf = Buffer.from('%PDF-1.4\n1 0 obj\n<< >>\nstream\nendstream\nendobj\n%%EOF\n', 'latin1')
+  assert.equal(extractPdfText(pdf, 1000).trim(), '')
+})
