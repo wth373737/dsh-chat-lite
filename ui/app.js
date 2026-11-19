@@ -1,20 +1,39 @@
-// 运行期错误直接显示在页面顶部，便于在手机上定位（正常情况不会出现）
-window.addEventListener('error', (event) => {
-  const box = document.createElement('pre')
-  box.style.cssText = 'position:fixed;left:0;right:0;top:0;z-index:999;margin:0;padding:8px;background:#fee;color:#900;font:12px/1.5 monospace;white-space:pre-wrap'
-  box.textContent = '[error] ' + (event.message || '') + '\n' + (event.filename || '') + ':' + (event.lineno || '')
-  document.body.appendChild(box)
-})
-window.addEventListener('unhandledrejection', (event) => {
-  const box = document.createElement('pre')
-  box.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:999;margin:0;padding:8px;background:#fee;color:#900;font:12px/1.5 monospace;white-space:pre-wrap'
-  box.textContent = '[rejection] ' + String((event.reason && event.reason.message) || event.reason)
-  document.body.appendChild(box)
-})
 // dsh-chat-lite 移动端前端（无框架）
 'use strict'
 
 const BUILD = '2025-11-19.13'
+// 运行期错误：底部小条，可关闭，绝不遮挡界面
+function showErrorBar(text) {
+  let bar = document.getElementById('error-bar')
+  if (!bar) {
+    bar = document.createElement('div')
+    bar.id = 'error-bar'
+    bar.style.cssText =
+      'position:fixed;left:8px;right:8px;bottom:8px;z-index:999;padding:8px 34px 8px 10px;' +
+      'background:rgba(160,20,20,.94);color:#fff;font:12px/1.5 monospace;border-radius:10px;' +
+      'max-height:32vh;overflow:auto;white-space:pre-wrap'
+    const close = document.createElement('button')
+    close.textContent = '×'
+    close.style.cssText =
+      'position:absolute;right:6px;top:4px;width:24px;height:24px;border:0;border-radius:50%;' +
+      'background:rgba(255,255,255,.2);color:#fff;font-size:14px;line-height:1'
+    close.addEventListener('click', () => bar.remove())
+    bar.appendChild(close)
+    const body = document.createElement('span')
+    body.id = 'error-bar-text'
+    bar.appendChild(body)
+    document.body.appendChild(bar)
+  }
+  const body = bar.querySelector('#error-bar-text')
+  if (body) body.textContent = String(text || '').slice(0, 600)
+}
+
+window.addEventListener('error', (event) => {
+  showErrorBar('[error] ' + (event.message || '') + ' @ ' + (event.lineno || ''))
+})
+window.addEventListener('unhandledrejection', (event) => {
+  showErrorBar('[rejection] ' + String((event.reason && event.reason.message) || event.reason))
+})
 
 const $ = (id) => document.getElementById(id)
 const el = {
@@ -749,7 +768,7 @@ el.messages.addEventListener('touchmove', (event) => {
 
 // SW 更新后自动接管一次，避免"改了看不到"
 let reloading = false
-if ('serviceWorker' in navigator) {
+if (navigator.serviceWorker) {
   navigator.serviceWorker.addEventListener('controllerchange', () => {
     if (reloading) return
     reloading = true
@@ -757,6 +776,85 @@ if ('serviceWorker' in navigator) {
   })
 }
 
+// ── 会话菜单（原实现丢失，这里补回；用页面内弹窗，PWA 里可用）─────
+let menuSheet = null
+
+function closeMenu() {
+  if (menuSheet && menuSheet.parentNode) menuSheet.parentNode.removeChild(menuSheet)
+  menuSheet = null
+}
+
+function openSessionMenu(id) {
+  closeMenu()
+  const isPinned = state.pinned.has(id)
+  const sheet = document.createElement('div')
+  sheet.className = 'menu-sheet'
+  sheet.innerHTML =
+    '<button type="button" data-op="rename">重命名</button>' +
+    '<button type="button" data-op="' + (isPinned ? 'unpin' : 'pin') + '">' + (isPinned ? '取消置顶' : '置顶') + '</button>' +
+    '<button type="button" class="danger" data-op="archive">删除</button>'
+  sheet.addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-op]')
+    if (!button) return
+    const op = button.getAttribute('data-op')
+    closeMenu()
+    await runSessionOp(id, op)
+  })
+  document.body.appendChild(sheet)
+  menuSheet = sheet
+  setTimeout(() => {
+    document.addEventListener('click', closeMenu, { once: true })
+  }, 0)
+}
+
+async function runSessionOp(id, op) {
+  const session = state.sessions.find((item) => item.id === id)
+  try {
+    if (op === 'rename') {
+      const current = (session && session.title) || ''
+      const title = await showDialog({
+        title: '重命名对话',
+        value: current,
+        placeholder: '输入新的标题',
+        confirm: '保存',
+      })
+      if (title === null) return
+      const trimmed = String(title).trim()
+      if (!trimmed || trimmed === current) return
+      await api('session-op', { method: 'POST', body: { op: 'rename', sessionId: id, title: trimmed } })
+      await loadList()
+      if (state.current && state.current.id === id) setTitle(trimmed)
+      toast('已重命名')
+      return
+    }
+    if (op === 'pin' || op === 'unpin') {
+      await api('session-op', { method: 'POST', body: { op, sessionId: id } })
+      if (op === 'pin') state.pinned.add(id)
+      else state.pinned.delete(id)
+      renderList()
+      toast(op === 'pin' ? '已置顶' : '已取消置顶')
+      return
+    }
+    if (op === 'archive') {
+      const ok = await showDialog({
+        title: '删除这条对话？',
+        text: '它会从列表里移除。内容仍保留在磁盘上，可在 DSH 桌面端恢复。',
+        confirm: '删除',
+        danger: true,
+        mode: 'confirm',
+      })
+      if (!ok) return
+      await api('session-op', { method: 'POST', body: { op: 'archive', sessionId: id } })
+      state.hidden.add(id)
+      if (state.current && state.current.id === id) state.current = null
+      await loadList()
+      toast('已从列表移除')
+      return
+    }
+  } catch (error) {
+    toast('操作失败：' + error.message)
+  }
+}
 // 惰性新建：只切到空态，真正创建留给第一次发送（避免堆一串空会话）
 function newChat() {
   closeDrawer()
@@ -974,7 +1072,7 @@ window.addEventListener('online', updateOnlineState)
 window.addEventListener('offline', updateOnlineState)
 
 // Service Worker：离线壳 + 最近 3 天缓存
-if ('serviceWorker' in navigator) {
+if (navigator.serviceWorker) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('sw.js', { scope: './' }).then((registration) => {
       // 每次回到前台都查一次更新，避免长期卡在旧版本

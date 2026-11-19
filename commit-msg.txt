@@ -1,6 +1,7 @@
-fix(mobile): 补齐 dialog 元素引用（这是白屏的真因）+ 启动自检 + 页面错误展示
+fix(mobile): 恢复会话菜单实现、错误条可关闭、serviceWorker 判断加固、加 UI 冒烟检查
 
-- el 对象缺 dialog/dialogOk 等引用，模块顶层 addEventListener 抛错，
-  导致整个脚本中断：顶栏和输入框渲染出来，中间空白，配对界面也不出现
-- 新增 checkElements()：缺元素直接在页面顶部列出缺失 id
-- 新增 window error/unhandledrejection 提示层，运行时错误会显示在页面上
+- openSessionMenu/runSessionOp/closeMenu 在重写 newChat 时整块丢失，导致点 ⋯ 报 ReferenceError
+- 错误提示改为底部小条，可关闭，不再遮挡界面
+- navigator.serviceWorker 改为检查对象本身（属性存在但值为空时同样会崩）
+- 新增 tools/check-ui.mjs：最小 DOM 桩执行 app.js，捕获白屏类问题；
+  并接入 npm run check（CI 也会跑）

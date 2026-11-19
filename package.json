@@ -4,7 +4,12 @@
   "private": true,
   "type": "module",
   "description": "闲聊区：手机友好的日常聊天面板 + 自管历史库（年月分组/全文搜索/附件图片）+ 闲聊专用 preset（中文思维链、可开关联网）。",
-  "keywords": ["dsh", "cordis-plugin", "chat", "deepseek-harness"],
+  "keywords": [
+    "dsh",
+    "cordis-plugin",
+    "chat",
+    "deepseek-harness"
+  ],
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -12,7 +17,7 @@
   },
   "scripts": {
     "import": "node tools/build-history.mjs",
-    "check": "node --check index.js && node --check client.js && node --check tools/build-history.mjs",
+    "check": "node --check index.js && node --check client.js && node --check mobile.js && node --check ui/app.js && node --check ui/sw.js && node tools/check-ui.mjs",
     "test": "node --test test/host.test.mjs"
   },
   "exports": {
@@ -33,7 +38,8 @@
     "ui/*",
     "tools/build-history.mjs",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "tools/check-ui.mjs"
   ],
   "dsh": {
     "bundle": {
