@@ -107,7 +107,36 @@ function slimRecords(records) {
         },
       })
     } else if (event.type === 'tool/call') {
-      out.push({ event: { type: event.type, seq: event.seq, time: event.time, data: { name: event.data && event.data.name } } })
+      out.push({
+        event: {
+          type: event.type,
+          seq: event.seq,
+          time: event.time,
+          data: {
+            name: event.data && event.data.name,
+            callId: event.data && event.data.callId,
+            arguments: String((event.data && event.data.arguments) || '').slice(0, 600),
+          },
+        },
+      })
+    } else if (event.type === 'tool/result') {
+      const meta = (event.data && event.data.message) || {}
+      const text = ((meta.content || [])
+        .filter((part) => part && part.type === 'text')
+        .map((part) => part.text)
+        .join('\n') || '').slice(0, 1200)
+      out.push({
+        event: {
+          type: event.type,
+          seq: event.seq,
+          time: event.time,
+          data: {
+            callId: (meta.toolCallId || (meta.source && meta.source.callId)) || '',
+            text,
+            isError: Boolean(meta.isError),
+          },
+        },
+      })
     }
   }
   return out

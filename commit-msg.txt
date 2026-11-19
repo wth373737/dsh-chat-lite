@@ -1,9 +1,1 @@
-fix(mobile): 工具调用参数与结果真正透出（上次替换未命中）
-
-- 宿主 slimRecords 的 tool/call 仍只有 name（旧代码），导致前端拿不到参数与结果
-- 本次按实际代码形貌替换，tool/call 带 name/callId/arguments，tool/result 带 callId/text/isError
-
-feat(preset): 闲聊预设启用 dsh-tool-fs，模型可直接读取上传的附件
-
-实测：附件会落到 DSH 附件库（.dsh/attachments/v1/files/…），启用 read 工具后
-模型可直接读取（tool/call read → 正确答出文件内口令）。因此去掉"另存 uploads"的设想。
+fix(mobile): 宿主 tool/call 与 tool/result 透出参数与结果（按实际缩进替换，之前未命中）
