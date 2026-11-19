@@ -907,9 +907,9 @@ export function registerMobile(ctx, config) {
             if (!attachments || typeof attachments.admitEncodedFile !== 'function') {
               return sendJson(res, 400, { ok: false, error: '宿主不支持文件附件' })
             }
-            const bytes = Buffer.from(String(body.data), 'base64')
+            // 参数是「规范化 base64 字符串」，由宿主自行解码与校验
             const ref = await attachments.admitEncodedFile({
-              data: new Uint8Array(bytes),
+              data: String(body.data),
               name: String(body.name),
             })
             return sendJson(res, 200, {
