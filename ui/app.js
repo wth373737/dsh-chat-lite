@@ -206,7 +206,6 @@ async function loadList() {
   state.pinned = new Set((data.sessions || []).filter((item) => item.pinned).map((item) => item.id))
   state.sessions = (data.sessions || [])
     .filter((item) => !item.blank)   // 隐藏空会话（惰性新建后不应该再出现）
-    .filter((item) => !item.archived || state.hidden.has(item.id) === false)
     .map((item) => ({
       ...item,
       title: item.title || '新对话',
