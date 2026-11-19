@@ -30,6 +30,7 @@
     "cordis.patch.yml",
     "icon.svg",
     "locale/*.json",
+    "ui/*",
     "tools/build-history.mjs",
     "README.md",
     "LICENSE"

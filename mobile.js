@@ -14,10 +14,12 @@
 import { randomBytes, createHash } from 'node:crypto'
 import { readFile, writeFile, mkdir } from 'node:fs/promises'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { networkInterfaces } from 'node:os'
 import { createServer } from 'node:http'
 
 const MOUNT = '/chat-lite/m'
+const UI_DIR = fileURLToPath(new URL('./ui/', import.meta.url))
 const COOKIE_NAME = 'chat_lite_dev'
 const AUTH_FILE = 'auth.json'
 const MAX_BODY = 4 * 1024 * 1024
@@ -31,6 +33,29 @@ function sendJson(res, status, payload) {
     'cache-control': 'no-store',
   })
   res.end(body)
+}
+
+const MIME = {
+  '.css': 'text/css; charset=utf-8',
+  '.js': 'application/javascript; charset=utf-8',
+  '.html': 'text/html; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.json': 'application/json; charset=utf-8',
+  '.png': 'image/png',
+  '.webp': 'image/webp',
+}
+
+async function sendFile(res, file) {
+  try {
+    const data = await readFile(file)
+    res.writeHead(200, {
+      'content-type': MIME[path.extname(file).toLowerCase()] || 'application/octet-stream',
+      'cache-control': 'no-cache',
+    })
+    res.end(data)
+  } catch {
+    sendText(res, 404, 'not found')
+  }
 }
 
 function sendText(res, status, body, type = 'text/plain; charset=utf-8') {
@@ -246,7 +271,14 @@ export function registerMobile(ctx, config) {
               res.writeHead(302, { location: MOUNT + '/' })
               return res.end()
             }
-            return sendText(res, 200, pageHtml(), 'text/html; charset=utf-8')
+            return sendFile(res, path.join(UI_DIR, 'index.html'))
+          }
+
+          // 静态资源：/ui/<file>
+          if (req.method === 'GET' && sub.startsWith('/ui/')) {
+            const name = sub.slice('/ui/'.length)
+            if (!/^[\w.-]+$/.test(name)) return sendJson(res, 400, { ok: false, error: 'bad path' })
+            return sendFile(res, path.join(UI_DIR, name))
           }
 
           if (!sub.startsWith('/api/')) return sendJson(res, 404, { ok: false, error: 'not found' })
@@ -303,13 +335,17 @@ export function registerMobile(ctx, config) {
               ok: true,
               chatDir,
               device: { id: device.id, label: device.label },
-              sessions: items.map((item) => ({
-                id: item.sessionId,
-                updatedAt: item.updatedAt,
-                running: item.running,
-                blank: item.blank,
-                parentId: item.parentSessionId || null,
-              })),
+              sessions: items.map((item) => {
+                const values = (item.projections && item.projections.values) || {}
+                return {
+                  id: item.sessionId,
+                  title: values.title || values.displayTitle || '',
+                  updatedAt: item.updatedAt,
+                  running: item.running,
+                  blank: item.blank,
+                  parentId: item.parentSessionId || null,
+                }
+              }),
               catalog,
             })
           }
@@ -345,6 +381,32 @@ export function registerMobile(ctx, config) {
           if (action === 'cancel') {
             const body = await readBody(req)
             const value = ctx.sessionController.cancel({ sessionId: body.sessionId })
+            return sendJson(res, 200, { ok: true, ...value })
+          }
+
+          if (action === 'effort') {
+            const body = await readBody(req)
+            if (!body.sessionId) return sendJson(res, 400, { ok: false, error: '缺少 sessionId' })
+            const catalog = await ctx.sessionController.modelCatalog()
+            const model = String(body.model || (catalog && catalog.default && catalog.default.model) || '')
+            const provider = String(body.provider || (catalog && catalog.default && catalog.default.provider) || '')
+            if (!provider || !model) return sendJson(res, 400, { ok: false, error: '模型目录为空' })
+            const value = await ctx.sessionController.selectModel({
+              sessionId: body.sessionId,
+              provider,
+              model,
+              reasoningEffort: body.effort ? String(body.effort) : undefined,
+            })
+            return sendJson(res, 200, { ok: true, ...value })
+          }
+
+          if (action === 'web') {
+            const body = await readBody(req)
+            if (!body.sessionId) return sendJson(res, 400, { ok: false, error: '缺少 sessionId' })
+            if (typeof config.setSessionWeb !== 'function') {
+              return sendJson(res, 400, { ok: false, error: '宿主未提供联网开关' })
+            }
+            const value = config.setSessionWeb(body.sessionId, body.enabled === true)
             return sendJson(res, 200, { ok: true, ...value })
           }
 

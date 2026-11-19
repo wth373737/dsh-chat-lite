@@ -633,7 +633,7 @@ export function apply(ctx, config = {}) {
   const sessionsRoot = resolveSessionsRoot(config, process.env)
 
   // 移动端独立页面（自带认证；重启后 Cookie 仍有效，不需要重新扫码）
-  registerMobile(ctx, { chatDir })
+  registerMobile(ctx, { chatDir, setSessionWeb: (sessionId, enabled) => setSessionWeb(ctx, sessionId, enabled) })
 
   // 定时归档：只扫 chatDir 下的会话，只在 <chatDir>/.chat-lite/ 里写文件。
   // 客户端也会在打开历史页时主动 POST 一次，保证"聊完就能看到"。
