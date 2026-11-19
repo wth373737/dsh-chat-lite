@@ -1064,7 +1064,11 @@ el.list.addEventListener('click', (event) => {
     return
   }
   const row = event.target.closest('.row')
-  if (row && row.dataset.id) openSession(row.dataset.id)
+  if (!row || !row.dataset.id) return
+  const target = state.sessions.find((item) => item.id === row.dataset.id)
+  if (target && target.kind === 'history') openHistory(row.dataset.id)
+  else if (!target) openHistory(row.dataset.id)   // 搜索结果里的历史条目
+  else openSession(row.dataset.id)
 })
 
 el.messages.addEventListener('click', async (event) => {
