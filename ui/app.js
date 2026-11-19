@@ -1,7 +1,7 @@
 // dsh-chat-lite 移动端前端（无框架）
 'use strict'
 
-const BUILD = '2025-11-19.13'
+const BUILD = '2025-11-19.14'
 // 运行期错误：底部小条，可关闭，绝不遮挡界面
 function showErrorBar(text) {
   let bar = document.getElementById('error-bar')
