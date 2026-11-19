@@ -54,7 +54,19 @@ function slimRecords(records) {
     if (event.type === 'user/message') {
       const source = (event.data && event.data.source) || {}
       if (source.kind && source.kind !== 'user') continue
-      const content = ((event.data && event.data.content) || []).filter((part) => part && part.type === 'text')
+      const content = ((event.data && event.data.content) || [])
+        .filter((part) => part && (part.type === 'text' || (part.type === 'image' && part.attachment)))
+        .map((part) => part.type === 'text'
+          ? { type: 'text', text: part.text }
+          : {
+            type: 'image',
+            attachment: {
+              attachmentId: part.attachment.attachmentId,
+              mediaType: part.attachment.mediaType,
+              width: part.attachment.width,
+              height: part.attachment.height,
+            },
+          })
       if (!content.length) continue
       out.push({ event: { type: event.type, seq: event.seq, time: event.time, data: { content, source: { kind: source.kind || 'user' } } } })
     } else if (event.type === 'assistant/message') {
