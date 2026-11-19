@@ -39,7 +39,8 @@
     "tools/build-history.mjs",
     "README.md",
     "LICENSE",
-    "tools/check-ui.mjs"
+    "tools/check-ui.mjs",
+    "office.js"
   ],
   "dsh": {
     "bundle": {

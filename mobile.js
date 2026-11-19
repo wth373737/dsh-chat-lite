@@ -19,6 +19,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { networkInterfaces } from 'node:os'
 import { createServer } from 'node:http'
+import { extractOfficeText } from './office.js'
 
 const MOUNT = '/chat-lite/m'
 // 备用挂载点：路径不同 = Service Worker 作用域不同，旧缓存不会劫持它
@@ -1014,10 +1015,18 @@ export function registerMobile(ctx, config) {
               return sendJson(res, 400, { ok: false, error: '宿主不支持文件上传' })
             }
             const bytes = Buffer.from(String(body.data), 'base64')
-            // PDF：顺手抽出文本，正文里直接给模型看
+            // PDF / Office：顺手抽出文本，正文里直接给模型看
             let textPreview = ''
             let pdfScanned = false
-            if (/\.pdf$/i.test(String(body.name))) {
+            const fileName = String(body.name)
+            if (/\.(docx|pptx|xlsx)$/i.test(fileName)) {
+              try {
+                textPreview = extractOfficeText(fileName, bytes, 12000)
+              } catch {
+                textPreview = ''
+              }
+            }
+            if (/\.pdf$/i.test(fileName)) {
               try {
                 textPreview = extractPdfText(bytes, 12000)
                 if (textPreview.replace(/\s/g, '').length < 200) {

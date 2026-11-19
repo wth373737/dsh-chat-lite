@@ -74,8 +74,7 @@
           - id: tool-fs
             name: '@deepseek-ai/dsh-tool-fs'
 
-          - id: univer-office
-            name: 'dsh-univer-office'
+
           - id: tool-web
             name: '@deepseek-ai/dsh-tool-web'
             disabled: false

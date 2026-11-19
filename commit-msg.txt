@@ -1,4 +1,11 @@
-fix(mobile): 上传响应返回 textPreview/pdfScanned；导出 extractPdfText 并加两条回归测试
+feat(mobile): Word/Excel/PPT 文本由宿主直接提取（office.js），并撤掉 univer 插件
 
-上一处替换未命中，导致 PDF 抽了文本却没返回给前端（白抽）。
-现在上传响应带 textPreview 与 pdfScanned，并有最小 PDF 的提取测试兜底。
+实测加入 dsh-univer-office 后，模型在闲聊里会乱试工具（win_bash 被沙箱拒绝 →
+terminal_open → univer_* → windows_desktop），一路空转，体验很差。
+
+改为与 PDF 同样的思路：宿主解析 docx/pptx/xlsx（zip + XML）直接抽文本，
+拼进消息正文，模型无需任何工具即可阅读。
+
+- office.js：zip 中央目录解析 + inflateRaw + XML 抽字，无外部依赖
+- 上传时 .docx/.pptx/.xlsx 返回 textPreview
+- 新增 3 条测试（docx / xlsx / 未知类型），总计 18 项全过
