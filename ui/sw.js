@@ -1,7 +1,7 @@
 // dsh-chat-lite Service Worker：离线壳 + 最近 3 天数据缓存
 'use strict'
 
-const VERSION = 'v2'
+const VERSION = 'v3'
 const SHELL_CACHE = 'chat-lite-shell-' + VERSION
 const API_CACHE = 'chat-lite-api-' + VERSION
 const MAX_AGE_MS = 3 * 24 * 60 * 60 * 1000 // 最近 3 天
@@ -77,6 +77,9 @@ self.addEventListener('fetch', (event) => {
     return
   }
 
+  // SSE 长连接：绝对不能缓冲（否则要等流结束，页面直接卡死）
+  if (url.pathname.includes('/api/follow')) return
+
   // 数据接口：网络优先，失败回落缓存（3 天内）
   if (url.pathname.includes('/api/')) {
     event.respondWith(
@@ -84,7 +87,10 @@ self.addEventListener('fetch', (event) => {
         const cache = await caches.open(API_CACHE)
         try {
           const response = await fetch(request)
-          if (response.ok) await putWithTime(cache, request, response)
+          const type = response.headers.get('content-type') || ''
+          if (response.ok && type.includes('application/json')) {
+            await putWithTime(cache, request, response)
+          }
           purgeOld()
           return response
         } catch (error) {

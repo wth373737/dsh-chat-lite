@@ -442,6 +442,11 @@ async function startFollow(sessionId) {
   }
   source.onerror = () => {
     setConn(false)
+    // 断线后 3 秒重连（仍是当前会话才重连，避免切走后还在后台拉流）
+    clearTimeout(startFollow.timer)
+    startFollow.timer = setTimeout(() => {
+      if (state.current && state.current.id === sessionId) startFollow(sessionId)
+    }, 3000)
   }
 }
 
