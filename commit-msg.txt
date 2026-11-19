@@ -1,5 +1,9 @@
-feat(mobile): 字体缩放（90%–130%，五档，记住选择）
+fix(mobile): 发送函数变量顺序错误（outgoing 在定义前使用导致全部发送失败）
 
-- 关键文字字号改为 calc(px * var(--fs))，由 :root 的 --fs 统一控制
-- 抽屉里加「字体 A− 100% A+」，点击即时生效并存入 localStorage
-- 只缩放字号，不改固定布局（避免 zoom 造成的定位错乱）
+- 重写 sendMessage：先处理文件与图片、算出 outgoing，再做乐观显示与提交
+- 出错时复位 running 并提示，不再卡在"发送中"
+
+feat(mobile): 附件落盘 + 闲聊预设启用文件读取工具
+
+- 上传文件同时写入 <chatDir>/uploads/，消息里给出本地路径
+- 闲聊预设加入 dsh-tool-fs / dsh-tool-fs-search，人设改为"可读取用户发来的文件"
