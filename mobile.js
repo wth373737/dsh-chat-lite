@@ -243,6 +243,22 @@ export function registerMobile(ctx, config) {
   if (!chatDir) return () => {}
 
   const auth = new MobileAuth(chatDir)
+  // 宿主方法需要 AbortSignal；插件卸载时统一取消
+  const lifetime = new AbortController()
+
+  /** 找到闲聊目录对应的工作区 id（新建会话时用于绑定）。 */
+  async function resolveWorkspace() {
+    try {
+      const list = ctx.workspaceRegistry.list()
+      const target = path.resolve(chatDir).toLowerCase()
+      for (const workspace of list) {
+        if (String(workspace.path || '').toLowerCase() === target) return workspace.id
+      }
+      return list.length ? list[0].id : undefined
+    } catch {
+      return undefined
+    }
+  }
 
   const deviceOf = async (req) => {
     if (isLoopback(req)) return { id: 'loopback', label: '本机', loopback: true }
@@ -437,8 +453,6 @@ export function registerMobile(ctx, config) {
             return sendJson(res, 200, { ok: true, ...value })
           }
 
-          // 分叉：atSeq 为空则从末尾分叉；text 给了就在新会话里立刻发一条
-          // 语义：分支 / 删除该段 / 修改 / 重新生成 都通过它实现
           // 图片上传：base64 → attachments.saveImage → 返回持久引用
           if (action === 'upload') {
             const body = await readBody(req, 20 * 1024 * 1024)
@@ -501,6 +515,8 @@ export function registerMobile(ctx, config) {
             return sendJson(res, 200, { ok: true })
           }
 
+          // 分叉：atSeq 为空则从末尾分叉；text 给了就在新会话里立刻发一条
+          // 语义：分支 / 删除该段 / 修改 / 重新生成 都通过它实现
           if (action === 'fork') {
             const body = await readBody(req)
             if (!body.sessionId) return sendJson(res, 400, { ok: false, error: '缺少 sessionId' })
