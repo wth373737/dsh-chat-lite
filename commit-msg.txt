@@ -1,5 +1,7 @@
-feat(mobile): 工具调用可展开查看参数与结果
+feat(mobile): 文件附件（普通文件）与消息内附件展示
 
-- 宿主瘦身时保留 tool/call 的 name/callId/arguments 与 tool/result 的文本、isError
-- 前端把结果按 callId 合并到对应调用；芯片显示名称 + 参数摘要 + 状态标记
-- 点击芯片展开参数与结果（最长 1200 字），错误调用标红
+- 宿主：/api/upload-file 走 attachments.admitEncodedFile 取得持久引用
+- 宿主：/api/send 支持 files，按 {type:'file', attachment} 提交
+- 宿主：分页瘦身保留 file 部分（attachmentId/name/bytes）
+- 前端：附件面板“文件”可用，上传后显示文件标签，可移除
+- 前端：用户消息气泡里显示附件文件名

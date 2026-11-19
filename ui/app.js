@@ -57,6 +57,7 @@ const el = {
   pending: $('pending'),
   fileCamera: $('file-camera'),
   fileAlbum: $('file-album'),
+  fileDoc: $('file-doc'),
   offlineBanner: $('offline-banner'),
   pairing: $('pairing'),
   pairingInput: $('pairing-input'),
@@ -103,7 +104,8 @@ const state = {
   historyCursor: 0,
   historyHasMore: false,
   earliestSeq: 0,
-  pendingImages: [],   // [{ attachment, dataUrl }]
+  pendingImages: [],
+  pendingFiles: [],   // [{ attachment, dataUrl }]
   pinned: new Set(JSON.parse(localStorage.getItem('chat-lite:pinned') || '[]')),
   hidden: new Set(JSON.parse(localStorage.getItem('chat-lite:hidden') || '[]')),
 }
@@ -384,8 +386,9 @@ function buildMessages(records) {
       const parts = (event.data && event.data.content) || []
       const text = parts.filter((part) => part && part.type === 'text').map((part) => part.text).join('')
       const images = parts.filter((part) => part && part.type === 'image' && part.attachment).map((part) => part.attachment)
+      const files = parts.filter((part) => part && part.type === 'file' && part.attachment).map((part) => part.attachment)
       if (!text.trim() && !images.length) continue
-      out.push({ role: 'user', seq: event.seq, text, images })
+      out.push({ role: 'user', seq: event.seq, text, images, files })
     } else if (event.type === 'tool/call') {
       const name = String((event.data && event.data.name) || 'tool')
       out.push({
@@ -491,13 +494,16 @@ function usageHtml(usage) {
 }
 
 function imagesHtml(message) {
-  if (!message.images || !message.images.length) return ''
+  const files = (message.files || []).map((file) =>
+    '<div class="bubble-file">📄 ' + escapeHtml(String(file.name || '文件')) + '</div>',
+  ).join('')
+  if (!message.images || !message.images.length) return files
   const sessionId = (state.current && state.current.id) || ''
   return '<div class="bubble-images">' + message.images.map((ref) => {
     const src = ref.localUrl ||
       ('api/image?sessionId=' + encodeURIComponent(sessionId) + '&id=' + encodeURIComponent(ref.attachmentId || ''))
     return '<img src="' + escapeHtml(src) + '" alt="图片" loading="lazy" />'
-  }).join('') + '</div>'
+  }).join('') + files + '</div>'
 }
 
 /** 从工具参数里挑一行最有信息量的摘要。 */
@@ -853,7 +859,13 @@ async function sendMessage() {
     state.liveThinking = ''
     renderMessages()
     renderSend()
-    await api('send', { method: 'POST', body: { sessionId: id, text, images } })
+    const files = state.pendingFiles.map((item) => ({
+      attachmentId: item.attachmentId,
+      name: item.name,
+      bytes: item.bytes,
+    }))
+    await api('send', { method: 'POST', body: { sessionId: id, text, images, files } })
+    state.pendingFiles = []
     // 轮询兜底：即使 SSE 不工作，也能看到回复
     pollForReply(id, baseline)
   } catch (error) {
@@ -1217,9 +1229,11 @@ el.attachSheet.addEventListener('click', (event) => {
   if (!button || button.disabled) return
   el.attachSheet.hidden = true
   if (button.dataset.kind === 'camera') el.fileCamera.click()
+  if (button.dataset.kind === 'file') el.fileDoc.click()
   if (button.dataset.kind === 'album') el.fileAlbum.click()
 })
 el.fileCamera.addEventListener('change', () => pickImages(el.fileCamera))
+el.fileDoc.addEventListener('change', () => pickFiles(el.fileDoc))
 el.fileAlbum.addEventListener('change', () => pickImages(el.fileAlbum))
 
 /** 读取本地图片 → 上传宿主 → 记入待发送列表 */
@@ -1286,20 +1300,56 @@ function readAsDataUrl(file) {
   })
 }
 
+/** 选择普通文件 → 上传宿主 → 记入待发送列表 */
+async function pickFiles(input) {
+  const files = Array.from(input.files || [])
+  input.value = ''
+  for (const file of files) {
+    if (file.size > 10 * 1024 * 1024) {
+      toast('文件超过 10MB，已跳过')
+      continue
+    }
+    try {
+      const dataUrl = await readAsDataUrl(file)
+      const result = await api('upload-file', {
+        method: 'POST',
+        body: { name: file.name, data: dataUrl.slice(dataUrl.indexOf(',') + 1) },
+      })
+      state.pendingFiles.push(result.attachment)
+      renderPending()
+    } catch (error) {
+      toast('文件上传失败：' + error.message)
+    }
+  }
+}
+
 function renderPending() {
-  const list = state.pendingImages
-  el.pending.hidden = list.length === 0
-  el.pending.innerHTML = list.map((item, index) =>
+  const images = state.pendingImages
+  const files = state.pendingFiles
+  el.pending.hidden = images.length === 0 && files.length === 0
+  const imageHtml = images.map((item, index) =>
     '<div class="pending-item"><img src="' + item.dataUrl + '" alt="待发送图片" />' +
     '<button type="button" data-remove="' + index + '" aria-label="移除">×</button></div>',
   ).join('')
+  const fileHtml = files.map((item, index) =>
+    '<div class="pending-file">📄 ' + escapeHtml(String(item.name || '文件')) +
+    '<button type="button" data-remove-file="' + index + '" aria-label="移除">×</button></div>',
+  ).join('')
+  el.pending.innerHTML = imageHtml + fileHtml
 }
 
 el.pending.addEventListener('click', (event) => {
-  const button = event.target.closest('[data-remove]')
-  if (!button) return
-  state.pendingImages.splice(Number(button.dataset.remove), 1)
-  renderPending()
+  const imageButton = event.target.closest('[data-remove]')
+  if (imageButton) {
+    state.pendingImages.splice(Number(imageButton.dataset.remove), 1)
+    renderPending()
+    return
+  }
+  const fileButton = event.target.closest('[data-remove-file]')
+  if (fileButton) {
+    state.pendingFiles.splice(Number(fileButton.dataset.removeFile), 1)
+    renderPending()
+  }
 })
 
 function updateOnlineState() {

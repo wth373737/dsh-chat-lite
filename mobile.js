@@ -71,18 +71,27 @@ function slimRecords(records) {
       const source = (event.data && event.data.source) || {}
       if (source.kind && source.kind !== 'user') continue
       const content = ((event.data && event.data.content) || [])
-        .filter((part) => part && (part.type === 'text' || (part.type === 'image' && part.attachment)))
+        .filter((part) => part && (part.type === 'text' || ((part.type === 'image' || part.type === 'file') && part.attachment)))
         .map((part) => part.type === 'text'
           ? { type: 'text', text: part.text }
-          : {
-            type: 'image',
-            attachment: {
-              attachmentId: part.attachment.attachmentId,
-              mediaType: part.attachment.mediaType,
-              width: part.attachment.width,
-              height: part.attachment.height,
-            },
-          })
+          : part.type === 'image'
+            ? {
+              type: 'image',
+              attachment: {
+                attachmentId: part.attachment.attachmentId,
+                mediaType: part.attachment.mediaType,
+                width: part.attachment.width,
+                height: part.attachment.height,
+              },
+            }
+            : {
+              type: 'file',
+              attachment: {
+                attachmentId: part.attachment.attachmentId,
+                name: part.attachment.name,
+                bytes: part.attachment.bytes,
+              },
+            })
       if (!content.length) continue
       out.push({ event: { type: event.type, seq: event.seq, time: event.time, data: { content, source: { kind: source.kind || 'user' } } } })
     } else if (event.type === 'assistant/message') {
@@ -796,6 +805,7 @@ export function registerMobile(ctx, config) {
           if (action === 'send') {
             const body = await readBody(req)
             if (!body.sessionId || !body.text) return sendJson(res, 400, { ok: false, error: '缺少 sessionId/text' })
+            const files = Array.isArray(body.files) ? body.files.filter(Boolean) : []
             const images = Array.isArray(body.images) ? body.images.filter(Boolean) : []
             const content = [{ type: 'text', text: String(body.text || '') }]
             for (const image of images) {
@@ -808,6 +818,17 @@ export function registerMobile(ctx, config) {
                 mediaType: String(image.mediaType),
                 data: String(image.data),
                 ...(image.name ? { name: String(image.name) } : {}),
+              })
+            }
+            for (const file of files) {
+              if (!file || !file.attachmentId) continue
+              content.push({
+                type: 'file',
+                attachment: {
+                  attachmentId: String(file.attachmentId),
+                  name: file.name ? String(file.name) : undefined,
+                  bytes: Number(file.bytes || 0),
+                },
               })
             }
             const value = await ctx.sessionController.prompt({
@@ -876,6 +897,25 @@ export function registerMobile(ctx, config) {
               name: body.name ? String(body.name) : undefined,
             })
             return sendJson(res, 200, { ok: true, attachment: ref })
+          }
+
+          // 普通文件上传：走 attachments.admitEncodedFile
+          if (action === 'upload-file') {
+            const body = await readBody(req, 20 * 1024 * 1024)
+            if (!body.data || !body.name) return sendJson(res, 400, { ok: false, error: '缺少文件数据' })
+            const attachments = ctx.get ? ctx.get('attachments') : ctx.attachments
+            if (!attachments || typeof attachments.admitEncodedFile !== 'function') {
+              return sendJson(res, 400, { ok: false, error: '宿主不支持文件附件' })
+            }
+            const bytes = Buffer.from(String(body.data), 'base64')
+            const ref = await attachments.admitEncodedFile({
+              data: new Uint8Array(bytes),
+              name: String(body.name),
+            })
+            return sendJson(res, 200, {
+              ok: true,
+              attachment: { attachmentId: ref.attachmentId, name: ref.name, bytes: ref.bytes },
+            })
           }
 
           // 读取已存图片（用于回显历史消息里的图片）
