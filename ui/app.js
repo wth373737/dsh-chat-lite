@@ -33,7 +33,8 @@ const state = {
   live: null,
   static: false,
   editing: null,   // { atSeq, text } 修改用户消息时使用
-  liveText: '',   // 流式增量）
+  liveText: '',
+  liveThinking: '',
 }
 
 const EFFORT_LABEL = { max: '极', high: '高', low: '低', off: '关' }
@@ -305,13 +306,16 @@ function actionBtn(kind, label, index, disabled) {
 
 /** 从 assistant-stream 帧里取文本增量（不同版本字段略有差异，做了兼容）。 */
 function extractDelta(frame) {
-  if (!frame) return ''
-  const chunk = frame.chunk
-  if (chunk && chunk.type === 'text-delta' && typeof chunk.text === 'string') return chunk.text
-  if (frame.type === 'text-delta' && typeof frame.text === 'string') return frame.text
-  if (frame.delta && typeof frame.delta.text === 'string') return frame.delta.text
-  if (typeof frame.text === 'string') return frame.text
-  return ''
+  const empty = { text: '', reasoning: '' }
+  if (!frame) return empty
+  const chunk = frame.chunk || frame
+  if (chunk && chunk.type === 'text-delta' && typeof chunk.text === 'string') {
+    return { text: chunk.text, reasoning: '' }
+  }
+  if (chunk && chunk.type === 'reasoning-delta' && typeof chunk.text === 'string') {
+    return { text: '', reasoning: chunk.text }
+  }
+  return empty
 }
 
 function iconSvg(kind) {
@@ -330,9 +334,14 @@ function renderMessages() {
   const hasAny = state.messages.length > 0
   el.empty.hidden = hasAny || Boolean(state.current)
   el.messages.hidden = !hasAny
+  const thinkingLive = state.liveThinking
+    ? '<div class="thinking-body live">' + escapeHtml(state.liveThinking) + '</div>'
+    : ''
   const typing = state.running
-    ? state.liveText
-      ? '<div class="msg assistant"><div class="body">' + renderMarkdown(state.liveText) + '</div></div>'
+    ? state.liveText || state.liveThinking
+      ? '<div class="msg assistant">' + thinkingLive +
+        (state.liveText ? '<div class="body">' + renderMarkdown(state.liveText) + '</div>' : '') +
+        '</div>'
       : '<div class="msg assistant"><div class="typing"><span></span><span></span><span></span></div></div>'
     : ''
   el.messages.innerHTML = state.messages.map(messageHtml).join('') + typing
@@ -382,6 +391,7 @@ async function startFollow(sessionId) {
       if (frame.event && frame.event.type === 'assistant/message') {
         state.running = false
         state.liveText = ''
+        state.liveThinking = ''
         renderSend()
       }
       const next = buildMessages([{ event: frame.event }])
@@ -391,8 +401,9 @@ async function startFollow(sessionId) {
       }
     } else if (frame.type === 'assistant-stream') {
       const delta = extractDelta(frame.frame || frame)
-      if (delta) {
-        state.liveText += delta
+      if (delta.text || delta.reasoning) {
+        if (delta.text) state.liveText += delta.text
+        if (delta.reasoning) state.liveThinking += delta.reasoning
         renderMessages()
       }
     } else if (frame.type === 'error') {
