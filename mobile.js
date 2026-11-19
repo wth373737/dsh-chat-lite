@@ -20,8 +20,22 @@ import { networkInterfaces } from 'node:os'
 import { createServer } from 'node:http'
 
 const MOUNT = '/chat-lite/m'
+// 备用挂载点：路径不同 = Service Worker 作用域不同，旧缓存不会劫持它
+const MOUNT_ALIASES = ['/chat-lite/app']
 const UI_DIR = fileURLToPath(new URL('./ui/', import.meta.url))
 const COOKIE_NAME = 'chat_lite_dev'
+
+/** 解析请求命中的挂载点（主路径或别名），返回 { mount, sub } 或 null。 */
+function resolveMount(pathname) {
+  for (const mount of [MOUNT, ...MOUNT_ALIASES]) {
+    if (pathname === mount) return { mount, sub: '/' }
+    if (pathname.startsWith(mount + '/')) {
+      return { mount, sub: pathname.slice(mount.length) }
+    }
+  }
+  return null
+}
+
 const AUTH_FILE = 'auth.json'
 const MAX_BODY = 4 * 1024 * 1024
 
@@ -240,10 +254,11 @@ function mobileUrls(req, token, fixedPort, publicBaseUrl) {
 }
 
 /** 设备 Cookie 的统一格式（Path 限定在挂载点内，HttpOnly，一年）。 */
-function cookieHeader(cookieValue) {
+function cookieHeader(cookieValue, mount) {
+  const base = mount || MOUNT
   return [
     COOKIE_NAME + '=' + encodeURIComponent(cookieValue),
-    'Path=' + MOUNT,
+    'Path=' + base,
     'HttpOnly',
     'SameSite=Lax',
     'Max-Age=31536000',
@@ -378,7 +393,10 @@ export function registerMobile(ctx, config) {
 
   const handler = async (req, res) => {
         const url = new URL(req.url || '/', 'http://localhost')
-        const sub = url.pathname.slice(MOUNT.length)
+        const route = resolveMount(url.pathname)
+        if (!route) return sendJson(res, 404, { ok: false, error: 'not found' })
+        const mount = route.mount
+        const sub = route.sub
 
         try {
           // 页面本身
@@ -389,7 +407,7 @@ export function registerMobile(ctx, config) {
               if (!granted) return sendText(res, 403, '配对令牌无效', 'text/plain; charset=utf-8')
               res.setHeader(
                 'set-cookie',
-                cookieHeader(granted.cookie),
+                cookieHeader(granted.cookie, mount),
               )
               // 去掉 ?t= 再跳一次，避免令牌留在地址栏/历史里
               res.writeHead(302, { location: MOUNT + '/' })
@@ -436,7 +454,7 @@ export function registerMobile(ctx, config) {
             if (match) token = decodeURIComponent(match[1])
             const device = await auth.redeem(token, String(req.headers['user-agent'] || '').slice(0, 60))
             if (!device) return sendJson(res, 403, { ok: false, error: '配对码无效或已失效' })
-            res.setHeader('set-cookie', cookieHeader(device.cookie))
+            res.setHeader('set-cookie', cookieHeader(device.cookie, mount))
             return sendJson(res, 200, { ok: true, deviceId: device.deviceId })
           }
 

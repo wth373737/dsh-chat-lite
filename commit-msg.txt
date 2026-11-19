@@ -1,7 +1,7 @@
-fix(mobile): 资源加版本号、清缓存刷新、回到前台检查更新
+feat(mobile): 新增别名挂载点 /chat-lite/app（脱离旧 SW 缓存作用域）
 
-App 会长期卡在旧前端（旧 SW 的壳缓存），因此：
-- app.css / app.js 带 ?v=13，绕过旧缓存条目
-- 抽屉底部新增「清缓存刷新」：注销 SW、清空所有缓存、带 fresh 参数重进
-- 抽屉显示构建号，便于确认手机上跑的是哪个版本
-- 每次回到前台调用 registration.update()
+App 与 Chrome 共用 Cookie 和 origin 存储，清应用数据无法清掉旧 Service Worker，
+导致界面永远停在旧版本。换路径 = 换 SW 作用域，旧缓存无法劫持。
+
+- MOUNT_ALIASES 支持备用挂载点，路由与 Cookie Path 按实际挂载点设置
+- 配对链接优先给别名地址，便于重新安装一个干净的作用域
