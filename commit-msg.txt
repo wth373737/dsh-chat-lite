@@ -1,9 +1,9 @@
-fix(mobile): 发送函数变量顺序错误（outgoing 在定义前使用导致全部发送失败）
+fix(mobile): 工具调用参数与结果真正透出（上次替换未命中）
 
-- 重写 sendMessage：先处理文件与图片、算出 outgoing，再做乐观显示与提交
-- 出错时复位 running 并提示，不再卡在"发送中"
+- 宿主 slimRecords 的 tool/call 仍只有 name（旧代码），导致前端拿不到参数与结果
+- 本次按实际代码形貌替换，tool/call 带 name/callId/arguments，tool/result 带 callId/text/isError
 
-feat(mobile): 附件落盘 + 闲聊预设启用文件读取工具
+feat(preset): 闲聊预设启用 dsh-tool-fs，模型可直接读取上传的附件
 
-- 上传文件同时写入 <chatDir>/uploads/，消息里给出本地路径
-- 闲聊预设加入 dsh-tool-fs / dsh-tool-fs-search，人设改为"可读取用户发来的文件"
+实测：附件会落到 DSH 附件库（.dsh/attachments/v1/files/…），启用 read 工具后
+模型可直接读取（tool/call read → 正确答出文件内口令）。因此去掉"另存 uploads"的设想。
