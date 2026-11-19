@@ -56,6 +56,32 @@ async function api(path, options = {}) {
   return json
 }
 
+/** 复制文本：https 用 Clipboard API，http（局域网）退回 execCommand。 */
+async function copyText(text) {
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text)
+      return true
+    }
+  } catch {
+    // 继续走兜底
+  }
+  try {
+    const area = document.createElement('textarea')
+    area.value = text
+    area.setAttribute('readonly', '')
+    area.style.cssText = 'position:fixed;top:0;left:0;opacity:0'
+    document.body.appendChild(area)
+    area.select()
+    area.setSelectionRange(0, text.length)
+    const ok = document.execCommand('copy')
+    document.body.removeChild(area)
+    return ok
+  } catch {
+    return false
+  }
+}
+
 const escapeHtml = (value) =>
   String(value == null ? '' : value)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -159,10 +185,12 @@ function renderList() {
 
 async function loadList() {
   const data = await api('bootstrap')
-  state.sessions = (data.sessions || []).map((item) => ({
-    ...item,
-    title: item.title || '新对话',
-  }))
+  state.sessions = (data.sessions || [])
+    .filter((item) => !item.blank)   // 隐藏空会话（惰性新建后不应该再出现）
+    .map((item) => ({
+      ...item,
+      title: item.title || '新对话',
+    }))
   renderList()
 }
 
@@ -465,16 +493,17 @@ $('new-chat').addEventListener('click', newChat)
 $('new-chat-top').addEventListener('click', newChat)
 el.search.addEventListener('input', renderList)
 
-async function newChat() {
+// 惰性新建：只切到空态，真正创建留给第一次发送（避免堆一串空会话）
+function newChat() {
   closeDrawer()
-  try {
-    const created = await api('new', { method: 'POST', body: {} })
-    await loadList()
-    await openSession(created.sessionId)
-    el.input.focus()
-  } catch (error) {
-    toast('新建失败：' + error.message)
-  }
+  stopFollow()
+  state.current = null
+  state.messages = []
+  state.records = []
+  setTitle('闲聊')
+  renderMessages()
+  renderList()
+  el.input.focus()
 }
 
 el.list.addEventListener('click', (event) => {
@@ -506,12 +535,8 @@ el.messages.addEventListener('click', async (event) => {
   if (!message) return
   const kind = action.dataset.action
   if (kind === 'copy') {
-    try {
-      await navigator.clipboard.writeText(message.text || '')
-      toast('已复制')
-    } catch {
-      toast('复制失败，请长按选择')
-    }
+    const ok = await copyText(message.text || '')
+    toast(ok ? '已复制整条消息' : '复制失败，请手动选择')
     return
   }
   toast('「' + action.getAttribute('title') + '」下一步实现')
