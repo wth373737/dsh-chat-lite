@@ -1,1 +1,1 @@
-fix(mobile): 宿主 tool/call 与 tool/result 透出参数与结果（按实际缩进替换，之前未命中）
+fix(mobile): 文件选择改用文档类型白名单，Android 才会弹文件管理器而不是媒体库
