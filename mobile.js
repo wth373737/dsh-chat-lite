@@ -13,6 +13,7 @@
 
 import { randomBytes, createHash } from 'node:crypto'
 import { readFile, writeFile, mkdir } from 'node:fs/promises'
+import { statSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { networkInterfaces } from 'node:os'
@@ -86,6 +87,37 @@ function slimRecords(records) {
     }
   }
   return out
+}
+
+/** 定位宿主 sessions 根目录（从 DSH_HOME 推导，兼容 .dsh 嵌套）。 */
+function defaultSessionsRoot() {
+  const home = process.env.DSH_HOME || ''
+  if (!home) return ''
+  const candidates = [path.join(home, 'sessions'), path.join(home, '.dsh', 'sessions')]
+  for (const candidate of candidates) {
+    try {
+      if (statSync(candidate).isDirectory()) return candidate
+    } catch {
+      // 试下一个
+    }
+  }
+  return candidates[0]
+}
+
+/** 读取宿主持久化的工作区状态（归档/置顶集合）。 */
+async function readWorkspaceState(sessionsRoot) {
+  const empty = { archived: new Set(), pinned: new Set() }
+  try {
+    const file = path.join(path.dirname(sessionsRoot), 'storages', 'workspace.json')
+    const raw = JSON.parse(await readFile(file, 'utf8'))
+    const global = (raw && raw.global) || {}
+    return {
+      archived: new Set((global.archivedSessionIds || []).map(String)),
+      pinned: new Set((global.pinnedSessionIds || []).map(String)),
+    }
+  } catch {
+    return empty
+  }
 }
 
 const IMAGE_EXT = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif' }
@@ -397,6 +429,17 @@ export function registerMobile(ctx, config) {
             const controller = ctx.sessionController
             const listed = await controller.list({}, lifetime.signal)
             const items = (listed.items || []).filter((item) => item.cwd === chatDir && !item.origin)
+            // 归档/置顶是宿主全局状态，直接读持久化文件（比订阅流可靠）
+            const includeArchived = url.searchParams.get('all') === '1'
+            let sessionsRoot = ''
+            try {
+              sessionsRoot = defaultSessionsRoot()
+            } catch {
+              sessionsRoot = ''
+            }
+            const workspaceState = sessionsRoot
+              ? await readWorkspaceState(sessionsRoot)
+              : { archived: new Set(), pinned: new Set() }
             let catalog = null
             try {
               catalog = await controller.modelCatalog()
@@ -407,7 +450,7 @@ export function registerMobile(ctx, config) {
               ok: true,
               chatDir,
               device: { id: device.id, label: device.label },
-              sessions: items.map((item) => {
+              sessions: items.filter((item) => includeArchived || !workspaceState.archived.has(String(item.sessionId))).map((item) => {
                 const values = (item.projections && item.projections.values) || {}
                 return {
                   id: item.sessionId,
@@ -416,6 +459,8 @@ export function registerMobile(ctx, config) {
                   running: item.running,
                   blank: item.blank,
                   parentId: item.parentSessionId || null,
+                  archived: workspaceState.archived.has(String(item.sessionId)),
+                  pinned: workspaceState.pinned.has(String(item.sessionId)),
                 }
               }),
               catalog,

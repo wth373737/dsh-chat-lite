@@ -203,8 +203,10 @@ function renderList() {
 
 async function loadList() {
   const data = await api('bootstrap')
+  state.pinned = new Set((data.sessions || []).filter((item) => item.pinned).map((item) => item.id))
   state.sessions = (data.sessions || [])
     .filter((item) => !item.blank)   // 隐藏空会话（惰性新建后不应该再出现）
+    .filter((item) => !item.archived || state.hidden.has(item.id) === false)
     .map((item) => ({
       ...item,
       title: item.title || '新对话',
@@ -710,21 +712,51 @@ async function pickImages(input) {
     if (state.pendingImages.length >= 4) { toast('一次最多 4 张图片'); break }
     if (file.size > 10 * 1024 * 1024) { toast('图片超过 10MB，已跳过'); continue }
     try {
-      const dataUrl = await readAsDataUrl(file)
-      const mediaType = file.type === 'image/png' || file.type === 'image/webp' || file.type === 'image/gif'
-        ? file.type
-        : 'image/jpeg'
+      const rawUrl = await readAsDataUrl(file)
+      const compressed = await compressImage(rawUrl)
       state.pendingImages.push({
-        mediaType,
-        data: dataUrl.slice(dataUrl.indexOf(',') + 1),
+        mediaType: compressed.mediaType,
+        data: compressed.dataUrl.slice(compressed.dataUrl.indexOf(',') + 1),
         name: file.name,
-        dataUrl,
+        dataUrl: compressed.dataUrl,
       })
       renderPending()
     } catch (error) {
       toast('读取图片失败：' + error.message)
     }
   }
+}
+
+/**
+ * 压缩图片：长边超过 1600 或体积偏大时，用 canvas 重编码为 JPEG。
+ * 手机上原图往往 3-5MB，压完通常只剩几百 KB，发送更快也更省流量。
+ */
+function compressImage(dataUrl, maxSide = 1600, quality = 0.85) {
+  return new Promise((resolve) => {
+    const image = new Image()
+    image.onload = () => {
+      const { width, height } = image
+      const longSide = Math.max(width, height)
+      const bytes = Math.round((dataUrl.length - dataUrl.indexOf(',') - 1) * 0.75)
+      if (longSide <= maxSide && bytes <= 900 * 1024) {
+        resolve({ dataUrl, mediaType: dataUrl.slice(5, dataUrl.indexOf(';')) || 'image/jpeg' })
+        return
+      }
+      const scale = Math.min(1, maxSide / longSide)
+      const canvas = document.createElement('canvas')
+      canvas.width = Math.round(width * scale)
+      canvas.height = Math.round(height * scale)
+      const context = canvas.getContext('2d')
+      context.drawImage(image, 0, 0, canvas.width, canvas.height)
+      try {
+        resolve({ dataUrl: canvas.toDataURL('image/jpeg', quality), mediaType: 'image/jpeg' })
+      } catch {
+        resolve({ dataUrl, mediaType: 'image/jpeg' })
+      }
+    }
+    image.onerror = () => resolve({ dataUrl, mediaType: 'image/jpeg' })
+    image.src = dataUrl
+  })
 }
 
 function readAsDataUrl(file) {
