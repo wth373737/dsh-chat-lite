@@ -54,7 +54,14 @@ async function api(path, options = {}) {
     body: options.body ? JSON.stringify(options.body) : undefined,
   })
   const json = await response.json().catch(() => ({ ok: false, error: 'HTTP ' + response.status }))
-  if (!json.ok) throw new Error(json.error || 'HTTP ' + response.status)
+  if (!json.ok) {
+    const message = String(json.error || 'HTTP ' + response.status)
+    // 宿主还是旧版本时会返回 unknown action：直接告诉用户原因
+    if (message.startsWith('unknown action')) {
+      throw new Error('宿主尚未加载该功能，请重启 DSH 后重试')
+    }
+    throw new Error(message)
+  }
   return json
 }
 
