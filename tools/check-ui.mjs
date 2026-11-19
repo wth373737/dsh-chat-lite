@@ -16,7 +16,7 @@ const missing = new Set()
 function makeElement(id) {
   const element = {
     id,
-    style: {},
+    style: { setProperty() {}, getPropertyValue: () => '', cssText: '' },
     dataset: {},
     hidden: false,
     value: '',
@@ -51,7 +51,7 @@ const cache = new Map()
 const document = {
   title: '',
   body: makeElement('body'),
-  documentElement: makeElement('html'),
+  documentElement: Object.assign(makeElement('html'), { style: { setProperty() {}, getPropertyValue: () => '', cssText: '' } }),
   visibilityState: 'visible',
   getElementById(id) {
     if (!ids.has(id)) {

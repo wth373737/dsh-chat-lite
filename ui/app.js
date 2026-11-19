@@ -1443,6 +1443,18 @@ el.dialog.addEventListener('click', (event) => {
   if (event.target === el.dialog) closeDialog(null)
 })
 
+const FONT_STEPS = [0.9, 1, 1.1, 1.2, 1.3]
+let fontIndex = 1
+
+function applyFontScale(index, persist) {
+  fontIndex = Math.max(0, Math.min(FONT_STEPS.length - 1, index))
+  const scale = FONT_STEPS[fontIndex]
+  document.documentElement.style.setProperty('--fs', String(scale))
+  const label = $('font-value')
+  if (label) label.textContent = Math.round(scale * 100) + '%'
+  if (persist) localStorage.setItem('chat-lite:font', String(fontIndex))
+}
+
 function showPairing(message) {
   el.pairing.hidden = false
   el.pairingMsg.textContent = message || ''
@@ -1482,6 +1494,9 @@ async function submitPairing() {
   }
 }
 
+$('font-plus').addEventListener('click', () => applyFontScale(fontIndex + 1, true))
+$('font-minus').addEventListener('click', () => applyFontScale(fontIndex - 1, true))
+
 el.pairingSubmit.addEventListener('click', submitPairing)
 $('settings-entry').addEventListener('click', () => {
   closeDrawer()
@@ -1491,6 +1506,7 @@ $('settings-entry').addEventListener('click', () => {
 async function boot() {
   document.title = '闲聊 v' + BUILD
   if (!checkElements()) return
+  applyFontScale(Number(localStorage.getItem('chat-lite:font') || 1), false)
   const build = $('build')
   if (build) build.textContent = 'v' + BUILD
   renderChips()
