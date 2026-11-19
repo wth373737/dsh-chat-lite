@@ -35,6 +35,9 @@ const state = {
   editing: null,   // { atSeq, text } 修改用户消息时使用
   liveText: '',
   liveThinking: '',
+  pendingImages: [],   // [{ attachment, dataUrl }]
+  pinned: new Set(JSON.parse(localStorage.getItem('chat-lite:pinned') || '[]')),
+  hidden: new Set(JSON.parse(localStorage.getItem('chat-lite:hidden') || '[]')),
 }
 
 const EFFORT_LABEL = { max: '极', high: '高', low: '低', off: '关' }
@@ -160,8 +163,13 @@ function timeLabel(ts) {
 function renderList() {
   const query = el.search.value.trim().toLowerCase()
   const rows = state.sessions
+    .filter((item) => !state.hidden.has(item.id))
     .filter((item) => !query || String(item.title || '').toLowerCase().includes(query))
-    .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+    .sort((a, b) => {
+      const pinned = Number(state.pinned.has(b.id)) - Number(state.pinned.has(a.id))
+      if (pinned !== 0) return pinned
+      return (b.updatedAt || 0) - (a.updatedAt || 0)
+    })
 
   if (!rows.length) {
     el.list.innerHTML = '<div class="empty-list">' + (query ? '没有匹配的对话' : '还没有对话') + '</div>'
@@ -217,12 +225,11 @@ function buildMessages(records) {
     if (event.type === 'user/message') {
       const kind = event.data && event.data.source && event.data.source.kind
       if (kind && kind !== 'user') continue
-      const text = (event.data && event.data.content || [])
-        .filter((part) => part && part.type === 'text')
-        .map((part) => part.text)
-        .join('')
-      if (!text.trim()) continue
-      out.push({ role: 'user', seq: event.seq, text })
+      const parts = (event.data && event.data.content) || []
+      const text = parts.filter((part) => part && part.type === 'text').map((part) => part.text).join('')
+      const images = parts.filter((part) => part && part.type === 'image' && part.attachment).map((part) => part.attachment)
+      if (!text.trim() && !images.length) continue
+      out.push({ role: 'user', seq: event.seq, text, images })
     } else if (event.type === 'tool/call') {
       const name = String((event.data && event.data.name) || 'tool')
       out.push({ role: 'tool', seq: event.seq, name })
@@ -261,7 +268,7 @@ function messageHtml(message, index) {
     return (
       '<div class="msg user">' +
       '<div class="user-col">' +
-      '<div class="bubble">' + escapeHtml(message.text) + '</div>' +
+      '<div class="bubble">' + escapeHtml(message.text) + imagesHtml(message) + '</div>' +
       '<div class="actions user-actions">' +
       actionBtn('copy', '复制', index) +
       actionBtn('edit', '修改', index) +
@@ -294,6 +301,16 @@ function usageHtml(usage) {
   const parts = ['输入 ' + num(input), '输出 ' + num(output)]
   if (cache > 0) parts.push('缓存命中 ' + num(cache))
   return '<div class="usage">本次 ' + num(billable) + ' tokens（' + parts.join(' · ') + '）</div>'
+}
+
+function imagesHtml(message) {
+  if (!message.images || !message.images.length) return ''
+  const sessionId = (state.current && state.current.id) || ''
+  return '<div class="bubble-images">' + message.images.map((ref) => {
+    const src = ref.localUrl ||
+      ('api/image?sessionId=' + encodeURIComponent(sessionId) + '&id=' + encodeURIComponent(ref.attachmentId || ''))
+    return '<img src="' + escapeHtml(src) + '" alt="图片" loading="lazy" />'
+  }).join('') + '</div>'
 }
 
 function actionBtn(kind, label, index, disabled) {
@@ -461,7 +478,10 @@ async function sendMessage() {
       return
     }
     const id = await ensureSession()
-    await api('send', { method: 'POST', body: { sessionId: id, text } })
+    const images = state.pendingImages.map((item) => item.attachment)
+    await api('send', { method: 'POST', body: { sessionId: id, text, images } })
+    state.pendingImages = []
+    renderPending()
     state.running = true
     state.liveText = ''
     renderSend()
@@ -572,7 +592,7 @@ el.list.addEventListener('click', (event) => {
   const more = event.target.closest('[data-more]')
   if (more) {
     event.stopPropagation()
-    toast('重命名/置顶/删除：下一步实现')
+    openSessionMenu(more.dataset.more)
     return
   }
   const row = event.target.closest('.row')
@@ -670,9 +690,59 @@ el.webChip.addEventListener('click', toggleWeb)
 el.attach.addEventListener('click', () => { el.attachSheet.hidden = !el.attachSheet.hidden })
 el.attachSheet.addEventListener('click', (event) => {
   const button = event.target.closest('[data-kind]')
+  if (!button || button.disabled) return
+  el.attachSheet.hidden = true
+  if (button.dataset.kind === 'camera') el.fileCamera.click()
+  if (button.dataset.kind === 'album') el.fileAlbum.click()
+})
+el.fileCamera.addEventListener('change', () => pickImages(el.fileCamera))
+el.fileAlbum.addEventListener('change', () => pickImages(el.fileAlbum))
+
+/** 读取本地图片 → 上传宿主 → 记入待发送列表 */
+async function pickImages(input) {
+  const files = Array.from(input.files || [])
+  input.value = ''
+  for (const file of files) {
+    if (state.pendingImages.length >= 4) { toast('一次最多 4 张图片'); break }
+    if (file.size > 10 * 1024 * 1024) { toast('图片超过 10MB，已跳过'); continue }
+    try {
+      const dataUrl = await readAsDataUrl(file)
+      const base64 = dataUrl.slice(dataUrl.indexOf(',') + 1)
+      const result = await api('upload', {
+        method: 'POST',
+        body: { mediaType: file.type || 'image/jpeg', name: file.name, data: base64 },
+      })
+      state.pendingImages.push({ attachment: result.attachment, dataUrl })
+      renderPending()
+    } catch (error) {
+      toast('上传失败：' + error.message)
+    }
+  }
+}
+
+function readAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result || ''))
+    reader.onerror = () => reject(new Error('读取文件失败'))
+    reader.readAsDataURL(file)
+  })
+}
+
+function renderPending() {
+  const list = state.pendingImages
+  el.pending.hidden = list.length === 0
+  el.pending.innerHTML = list.map((item, index) =>
+    '<div class="pending-item"><img src="' + item.dataUrl + '" alt="待发送图片" />' +
+    '<button type="button" data-remove="' + index + '" aria-label="移除">×</button></div>',
+  ).join('')
+}
+
+el.pending.addEventListener('click', (event) => {
+  const button = event.target.closest('[data-remove]')
   if (!button) return
-  if (button.disabled) return
-  toast('图片附件：下一步实现')
+  state.pendingImages.splice(Number(button.dataset.remove), 1)
+  renderPending()
 })
 
 window.addEventListener('online', () => setConn(true))

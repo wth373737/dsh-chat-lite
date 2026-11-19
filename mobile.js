@@ -243,25 +243,6 @@ export function registerMobile(ctx, config) {
   if (!chatDir) return () => {}
 
   const auth = new MobileAuth(chatDir)
-  // 宿主这些方法需要 AbortSignal；随插件卸载统一取消
-  const lifetime = new AbortController()
-
-  // 解析该目录对应的 workspaceId：这样新建的会话会出现在工作区里（也才会被自动归档看到）
-  let workspaceId = null
-  const resolveWorkspace = async () => {
-    if (workspaceId) return workspaceId
-    try {
-      const registry = ctx.workspaceRegistry
-      if (!registry || typeof registry.list !== 'function') return null
-      const list = registry.list() || []
-      const wanted = String(chatDir).toLowerCase()
-      const found = list.find((item) => item && item.path && String(item.path).toLowerCase() === wanted)
-      if (found) workspaceId = found.id || found.workspaceId || null
-    } catch {
-      workspaceId = null
-    }
-    return workspaceId
-  }
 
   const deviceOf = async (req) => {
     if (isLoopback(req)) return { id: 'loopback', label: '本机', loopback: true }
@@ -402,11 +383,14 @@ export function registerMobile(ctx, config) {
           if (action === 'send') {
             const body = await readBody(req)
             if (!body.sessionId || !body.text) return sendJson(res, 400, { ok: false, error: '缺少 sessionId/text' })
+            const images = Array.isArray(body.images) ? body.images.filter(Boolean) : []
+            const content = [{ type: 'text', text: String(body.text || '') }]
+            for (const attachment of images) content.push({ type: 'image', attachment })
             const value = await ctx.sessionController.prompt({
               requestId: 'm-' + randomBytes(8).toString('hex'),
               sessionId: body.sessionId,
               mode: 'queue',
-              content: [{ type: 'text', text: String(body.text) }],
+              content,
             }, lifetime.signal)
             return sendJson(res, 200, { ok: true, ...value })
           }
@@ -455,6 +439,63 @@ export function registerMobile(ctx, config) {
 
           // 分叉：atSeq 为空则从末尾分叉；text 给了就在新会话里立刻发一条
           // 语义：分支 / 删除该段 / 修改 / 重新生成 都通过它实现
+          // 图片上传：base64 → attachments.saveImage → 返回持久引用
+          if (action === 'upload') {
+            const body = await readBody(req, 20 * 1024 * 1024)
+            if (!body.data || !body.mediaType) return sendJson(res, 400, { ok: false, error: '缺少图片数据' })
+            const bytes = Buffer.from(String(body.data), 'base64')
+            const ref = await ctx.attachments.saveImage({
+              data: new Uint8Array(bytes),
+              mediaType: String(body.mediaType),
+              name: body.name ? String(body.name) : undefined,
+            })
+            return sendJson(res, 200, { ok: true, attachment: ref })
+          }
+
+          // 读取已存图片（用于回显历史消息里的图片）
+          if (action === 'image') {
+            const sessionId = url.searchParams.get('sessionId') || ''
+            const attachmentId = url.searchParams.get('id') || ''
+            if (!sessionId || !attachmentId) return sendJson(res, 400, { ok: false, error: '缺少参数' })
+            let stored = null
+            try {
+              const session = ctx.sessions.get(sessionId)
+              if (session && typeof session.readAttachment === 'function') {
+                stored = await session.readAttachment(attachmentId)
+              }
+            } catch {
+              stored = null
+            }
+            if (!stored || !stored.data) return sendJson(res, 404, { ok: false, error: '找不到图片' })
+            return sendJson(res, 200, {
+              ok: true,
+              mediaType: stored.mediaType || 'image/jpeg',
+              data: Buffer.from(stored.data).toString('base64'),
+            })
+          }
+
+          // 会话菜单：重命名 / 置顶 / 取消置顶 / 删除(归档) / 取消归档
+          if (action === 'session-op') {
+            const body = await readBody(req)
+            if (!body.sessionId) return sendJson(res, 400, { ok: false, error: '缺少 sessionId' })
+            const op = String(body.op || '')
+            if (op === 'rename') {
+              if (!ctx.sessionController || typeof ctx.sessionController.rename !== 'function') {
+                return sendJson(res, 400, { ok: false, error: '宿主不支持重命名' })
+              }
+              const value = await ctx.sessionController.rename({ sessionId: body.sessionId, title: String(body.title || '').slice(0, 120) })
+              return sendJson(res, 200, { ok: true, value })
+            }
+            const workspace = ctx.workspaceController
+            if (!workspace) return sendJson(res, 400, { ok: false, error: '宿主缺少 workspaceController' })
+            if (op === 'pin') await workspace.pinSession({ sessionId: body.sessionId })
+            else if (op === 'unpin') await workspace.unpinSession({ sessionId: body.sessionId })
+            else if (op === 'archive') await workspace.archiveSession({ sessionId: body.sessionId })
+            else if (op === 'unarchive') await workspace.unarchiveSession({ sessionId: body.sessionId })
+            else return sendJson(res, 400, { ok: false, error: '未知操作 ' + op })
+            return sendJson(res, 200, { ok: true })
+          }
+
           if (action === 'fork') {
             const body = await readBody(req)
             if (!body.sessionId) return sendJson(res, 400, { ok: false, error: '缺少 sessionId' })
