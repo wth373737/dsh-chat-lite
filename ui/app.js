@@ -64,7 +64,9 @@ async function api(path, options = {}) {
     if (message.startsWith('unknown action')) {
       throw new Error('宿主尚未加载该功能，请重启 DSH 后重试')
     }
-    throw new Error(message)
+    const error = new Error(message)
+    error.needPair = Boolean(json.needPair)
+    throw error
   }
   return json
 }
@@ -802,6 +804,51 @@ if ('serviceWorker' in navigator) {
 }
 
 // ── 启动 ─────────────────────────────────────────────────
+function showPairing(message) {
+  el.pairing.hidden = false
+  el.pairingMsg.textContent = message || ''
+  setTimeout(() => el.pairingInput.focus(), 60)
+}
+
+function hidePairing() {
+  el.pairing.hidden = true
+  el.pairingMsg.textContent = ''
+}
+
+async function submitPairing() {
+  const raw = el.pairingInput.value.trim()
+  if (!raw) {
+    el.pairingMsg.textContent = '请先粘贴配对链接'
+    return
+  }
+  el.pairingSubmit.disabled = true
+  el.pairingMsg.textContent = '正在连接…'
+  try {
+    const result = await fetch('api/pair', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json', 'x-chat-lite': '1' },
+      body: JSON.stringify({ token: raw }),
+    }).then((response) => response.json())
+    if (!result.ok) throw new Error(result.error || '配对失败')
+    el.pairingInput.value = ''
+    hidePairing()
+    await loadList()
+    renderMessages()
+    toast('已连接')
+  } catch (error) {
+    el.pairingMsg.textContent = String(error.message || error)
+  } finally {
+    el.pairingSubmit.disabled = false
+  }
+}
+
+el.pairingSubmit.addEventListener('click', submitPairing)
+$('settings-entry').addEventListener('click', () => {
+  closeDrawer()
+  showPairing('粘贴新的配对链接即可换绑这台设备')
+})
+
 async function boot() {
   renderChips()
   renderSend()
@@ -809,7 +856,8 @@ async function boot() {
   try {
     await loadList()
   } catch (error) {
-    toast('加载失败：' + error.message)
+    if (error.needPair) showPairing()
+    else toast('加载失败：' + error.message)
   }
   renderMessages()
 

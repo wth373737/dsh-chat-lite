@@ -239,6 +239,17 @@ function mobileUrls(req, token, fixedPort, publicBaseUrl) {
   return urls
 }
 
+/** 设备 Cookie 的统一格式（Path 限定在挂载点内，HttpOnly，一年）。 */
+function cookieHeader(cookieValue) {
+  return [
+    COOKIE_NAME + '=' + encodeURIComponent(cookieValue),
+    'Path=' + MOUNT,
+    'HttpOnly',
+    'SameSite=Lax',
+    'Max-Age=31536000',
+  ].join('; ')
+}
+
 const hashOf = (value) => createHash('sha256').update(String(value)).digest('hex').slice(0, 32)
 
 // ── 认证存储 ───────────────────────────────────────────────────────────────
@@ -378,7 +389,7 @@ export function registerMobile(ctx, config) {
               if (!granted) return sendText(res, 403, '配对令牌无效', 'text/plain; charset=utf-8')
               res.setHeader(
                 'set-cookie',
-                `${COOKIE_NAME}=${encodeURIComponent(granted.cookie)}; Path=${MOUNT}; HttpOnly; SameSite=Lax; Max-Age=31536000`,
+                cookieHeader(granted.cookie),
               )
               // 去掉 ?t= 再跳一次，避免令牌留在地址栏/历史里
               res.writeHead(302, { location: MOUNT + '/' })
@@ -414,6 +425,21 @@ export function registerMobile(ctx, config) {
           const action = sub.slice('/api/'.length)
 
           // 令牌信息（仅 loopback）：用于桌面端复制配对链接
+          // App 内配对：粘贴配对码/链接后在此换取设备 Cookie
+          if (action === 'pair') {
+            const body = await readBody(req)
+            const raw = String(body.token || '').trim()
+            if (!raw) return sendJson(res, 400, { ok: false, error: '请粘贴配对链接或令牌' })
+            // 支持整条链接，自动取出 t 参数
+            let token = raw
+            const match = raw.match(/[?&]t=([^&\s]+)/)
+            if (match) token = decodeURIComponent(match[1])
+            const device = await auth.redeem(token, String(req.headers['user-agent'] || '').slice(0, 60))
+            if (!device) return sendJson(res, 403, { ok: false, error: '配对码无效或已失效' })
+            res.setHeader('set-cookie', cookieHeader(device.cookie))
+            return sendJson(res, 200, { ok: true, deviceId: device.deviceId })
+          }
+
           if (action === 'token') {
             if (!isLoopback(req)) return sendJson(res, 403, { ok: false, error: 'loopback only' })
             const device = await deviceOf(req)
