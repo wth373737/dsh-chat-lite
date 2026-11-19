@@ -252,6 +252,8 @@ for (const entry of sessionEntries) {
       thinking: s.thinking,
       files: s.files,
       first: s.firstUser,
+      // 来源标记：从 DeepSeek 导出包导入（本机闲聊会话由插件归档时标 local）
+      source: 'import',
     }),
   )
   done++

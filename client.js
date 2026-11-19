@@ -1046,6 +1046,14 @@ window.__ModuleLoader__.load({
       return { sessionId, chars: text.length, trace }
     }
 
+    /**
+     * 是否是「本机闲聊会话」（自动归档）而不是从导出包导入的。
+     * 本机会话 id 形如 session-<uuid>；导入的是裸 uuid。
+     */
+    function isLocalSessionId(id) {
+      return String(id || '').startsWith('session-')
+    }
+
     /** 把已排序的行按「年-月」分组（用于列表分段显示）。 */
     function groupByMonth(rows) {
       const groups = []
@@ -1797,6 +1805,14 @@ window.__ModuleLoader__.load({
         (historyPageSafe + 1) * HISTORY_PAGE,
       )
       const historyGroups = groupByMonth(historySlice)
+
+      // 来源判断：优先用 index 里的 source；老数据没有该字段时，
+      // 用「是否属于当前闲聊工作区的会话」兜底。
+      const chatIdSet = new Set((mine || []).map((row) => row.id))
+      const isLocalRow = (row) =>
+        row.source === 'local' ||
+        (row.source === undefined && (chatIdSet.has(row.id) || isLocalSessionId(row.id)))
+
       const docChars = doc
         ? doc.messages.reduce((sum, message) => sum + String(message.text || '').length, 0)
         : 0
@@ -1975,6 +1991,25 @@ window.__ModuleLoader__.load({
                 h(
                   'div',
                   { style: Object.assign({}, styles.cardTitle, { margin: 0, flex: 1 }) },
+                  doc && doc.meta && isLocalSessionId(doc.meta.id)
+                    ? h(
+                        'span',
+                        {
+                          style: {
+                            fontSize: 10.5,
+                            lineHeight: '16px',
+                            padding: '0 6px',
+                            marginRight: 6,
+                            borderRadius: 4,
+                            background: 'rgba(64,120,255,0.16)',
+                            color: 'var(--dsw-alias-brand-primary)',
+                            fontWeight: 600,
+                            verticalAlign: 'middle',
+                          },
+                        },
+                        t('本机', 'local'),
+                      )
+                    : null,
                   doc && doc.meta ? doc.meta.title || t('（无标题）', '(untitled)') : t('历史会话', 'History session'),
                 ),
                 doc && doc.meta
@@ -2270,8 +2305,53 @@ window.__ModuleLoader__.load({
                           { style: { flex: 1, minWidth: 0 } },
                           h(
                             'div',
-                            { style: { fontSize: 13, wordBreak: 'break-all' } },
-                            highlight(row.title || t('（无标题）', '(untitled)'), historyQueryText),
+                            {
+                              style: {
+                                fontSize: 13,
+                                wordBreak: 'break-all',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 6,
+                                flexWrap: 'wrap',
+                              },
+                            },
+                            isLocalRow(row)
+                              ? h(
+                                  'span',
+                                  {
+                                    style: {
+                                      flex: 'none',
+                                      fontSize: 10.5,
+                                      lineHeight: '16px',
+                                      padding: '0 6px',
+                                      borderRadius: 4,
+                                      background: 'rgba(64,120,255,0.16)',
+                                      color: 'var(--dsw-alias-brand-primary)',
+                                      fontWeight: 600,
+                                    },
+                                  },
+                                  t('本机', 'local'),
+                                )
+                              : h(
+                                  'span',
+                                  {
+                                    style: {
+                                      flex: 'none',
+                                      fontSize: 10.5,
+                                      lineHeight: '16px',
+                                      padding: '0 6px',
+                                      borderRadius: 4,
+                                      background: 'rgba(127,127,127,0.16)',
+                                      color: 'var(--dsw-alias-label-tertiary)',
+                                    },
+                                  },
+                                  t('导入', 'import'),
+                                ),
+                            h(
+                              'span',
+                              { style: { minWidth: 0 } },
+                              highlight(row.title || t('（无标题）', '(untitled)'), historyQueryText),
+                            ),
                           ),
                           // 说明「为什么命中」：优先显示全文搜索抓到的上下文片段
                           (() => {

@@ -516,6 +516,8 @@ export async function writeArchiveFiles({ libDir, targets, byId, readEvents, sta
       thinking: mapped.thinking,
       files: 0,
       first: mapped.first,
+      // 来源标记：本机闲聊会话自动归档（导入包生成的行标 import）
+      source: 'local',
     })
     state.set(id, target.revision)
     changed++
