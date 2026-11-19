@@ -388,7 +388,22 @@ function buildMessages(records) {
       out.push({ role: 'user', seq: event.seq, text, images })
     } else if (event.type === 'tool/call') {
       const name = String((event.data && event.data.name) || 'tool')
-      out.push({ role: 'tool', seq: event.seq, name })
+      out.push({
+        role: 'tool',
+        seq: event.seq,
+        callId: (event.data && event.data.callId) || String(event.seq),
+        name,
+        args: String((event.data && event.data.arguments) || ''),
+        result: '',
+        isError: false,
+      })
+    } else if (event.type === 'tool/result') {
+      const callId = String((event.data && event.data.callId) || '')
+      const target = out.find((item) => item.role === 'tool' && item.callId === callId)
+      if (target) {
+        target.result = String((event.data && event.data.text) || '')
+        target.isError = Boolean(event.data && event.data.isError)
+      }
     } else if (event.type === 'assistant/message') {
       const content = (event.data && event.data.message && event.data.message.content) || []
       const text = content.filter((part) => part.type === 'text').map((part) => part.text).join('')
@@ -418,12 +433,22 @@ function messageHtml(message, index) {
   }
 
   if (message.role === 'tool') {
+    const expanded = state.expandedTools.has(index)
+    const summary = toolSummary(message)
+    const mark = message.isError ? ' ⚠' : message.result ? ' ✓' : ''
     const label = /web_search/.test(message.name)
       ? '🌐 联网搜索'
       : /web_fetch/.test(message.name)
         ? '🌐 读取网页'
         : '🔧 ' + message.name
-    return '<div class="msg tool"><span class="tool-chip">' + escapeHtml(label) + '</span></div>'
+    const chip =
+      '<button type="button" class="tool-chip' + (message.isError ? ' error' : '') + '" data-tool="' + index + '">' +
+      label + (summary ? ' · ' + escapeHtml(summary.slice(0, 56)) : '') + mark +
+      '</button>'
+    const detail = expanded
+      ? '<pre class="tool-detail">' + escapeHtml((message.args ? message.args + '\n\n' : '') + (message.result || '（无结果）')) + '</pre>'
+      : ''
+    return '<div class="msg tool"><div class="tool-cell">' + chip + detail + '</div></div>'
   }
 
   if (message.role === 'user') {
@@ -473,6 +498,21 @@ function imagesHtml(message) {
       ('api/image?sessionId=' + encodeURIComponent(sessionId) + '&id=' + encodeURIComponent(ref.attachmentId || ''))
     return '<img src="' + escapeHtml(src) + '" alt="图片" loading="lazy" />'
   }).join('') + '</div>'
+}
+
+/** 从工具参数里挑一行最有信息量的摘要。 */
+function toolSummary(message) {
+  try {
+    const args = JSON.parse(message.args || '{}')
+    if (args.url) return String(args.url)
+    if (Array.isArray(args.queries)) return args.queries.join(' / ')
+    if (args.query) return String(args.query)
+    if (args.command) return String(args.command)
+    if (args.path) return String(args.path)
+  } catch {
+    // 参数不是 JSON 就忽略
+  }
+  return ''
 }
 
 function actionBtn(kind, label, index, disabled) {
@@ -1074,6 +1114,14 @@ el.list.addEventListener('click', (event) => {
 el.messages.addEventListener('click', async (event) => {
   if (event.target.closest('#load-earlier')) {
     loadEarlier()
+    return
+  }
+  const toolChip = event.target.closest('[data-tool]')
+  if (toolChip) {
+    const index = Number(toolChip.dataset.tool)
+    if (state.expandedTools.has(index)) state.expandedTools.delete(index)
+    else state.expandedTools.add(index)
+    renderMessages(true)
     return
   }
   const thinking = event.target.closest('[data-thinking]')

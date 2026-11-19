@@ -1,5 +1,5 @@
-fix(mobile): 历史条目点击走错分支；只读提示条固定到输入框上方
+feat(mobile): 工具调用可展开查看参数与结果
 
-- 点击处理里实际是 if (row && row.dataset.id) openSession(...)，之前的替换没命中，
-  导致历史条目被当成 DSH 会话打开并失败
-- .readonly-bar 改为固定定位，浮在输入框上方，避免被 fixed 布局遮住
+- 宿主瘦身时保留 tool/call 的 name/callId/arguments 与 tool/result 的文本、isError
+- 前端把结果按 callId 合并到对应调用；芯片显示名称 + 参数摘要 + 状态标记
+- 点击芯片展开参数与结果（最长 1200 字），错误调用标红

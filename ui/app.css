@@ -357,3 +357,15 @@ body {
   -webkit-line-clamp: 2; -webkit-box-orient: vertical;
 }
 .row-title { padding: 2px 0; }
+.tool-cell { display: flex; flex-direction: column; gap: 6px; max-width: 100%; }
+.tool-chip {
+  align-self: flex-start; border: 1px solid var(--line); background: var(--bg);
+  color: var(--ink-2); font-size: 12px; padding: 4px 10px; border-radius: 12px;
+  text-align: left; max-width: 100%;
+}
+.tool-chip.error { border-color: var(--err); color: var(--err); }
+.tool-detail {
+  margin: 0; padding: 8px 10px; border-radius: 10px; background: var(--bg);
+  color: var(--ink-2); font-size: 11.5px; line-height: 1.6;
+  max-height: 240px; overflow: auto; white-space: pre-wrap; word-break: break-all;
+}
