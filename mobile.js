@@ -228,7 +228,8 @@ function lanHosts() {
 function mobileUrls(req, token, fixedPort, publicBaseUrl) {
   const publicBase = String(publicBaseUrl || '').replace(/\/+$/, '')
   if (publicBase) {
-    return [publicBase + MOUNT + '/?t=' + token]
+    // 对外域名优先，同时保留局域网地址（Tailscale 未开启时仍可用）
+    return [publicBase + MOUNT + '/?t=' + token, 'http://' + String(req.headers.host || '127.0.0.1') + MOUNT + '/?t=' + token]
   }
   const host = String(req.headers.host || '')
   const hostPort = host.includes(':') ? host.slice(host.lastIndexOf(':') + 1) : '80'
