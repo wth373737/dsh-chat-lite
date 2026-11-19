@@ -76,6 +76,36 @@ function slimRecords(records) {
   return out
 }
 
+const IMAGE_EXT = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif' }
+
+/** 把图片按内容哈希存到 <chatDir>/.chat-lite/img/，供历史回显。 */
+async function saveLocalImage(chatDir, hash, mediaType, bytes) {
+  try {
+    const dir = path.join(chatDir, '.chat-lite', 'img')
+    await mkdir(dir, { recursive: true })
+    await writeFile(path.join(dir, hash + '.' + (IMAGE_EXT[mediaType] || 'bin')), bytes)
+  } catch {
+    // 本地副本失败不影响发送
+  }
+}
+
+/** 读取本地图片副本（attachmentId 形如 sha256:<hex>）。 */
+async function readLocalImage(chatDir, attachmentId) {
+  const id = String(attachmentId || '')
+  const hex = id.startsWith('sha256:') ? id.slice('sha256:'.length) : id
+  if (!/^[0-9a-f]{8,128}$/.test(hex)) return null
+  const dir = path.join(chatDir, '.chat-lite', 'img')
+  for (const [mediaType, ext] of Object.entries(IMAGE_EXT)) {
+    try {
+      const data = await readFile(path.join(dir, hex + '.' + ext))
+      return { mediaType, data }
+    } catch {
+      // 继续尝试下一个扩展名
+    }
+  }
+  return null
+}
+
 async function sendFile(res, file) {
   try {
     const data = await readFile(file)
@@ -401,7 +431,18 @@ export function registerMobile(ctx, config) {
             if (!body.sessionId || !body.text) return sendJson(res, 400, { ok: false, error: '缺少 sessionId/text' })
             const images = Array.isArray(body.images) ? body.images.filter(Boolean) : []
             const content = [{ type: 'text', text: String(body.text || '') }]
-            for (const attachment of images) content.push({ type: 'image', attachment })
+            for (const image of images) {
+              if (!image || !image.data || !image.mediaType) continue
+              const bytes = Buffer.from(String(image.data), 'base64')
+              const hash = createHash('sha256').update(bytes).digest('hex')
+              await saveLocalImage(chatDir, hash, String(image.mediaType), bytes)
+              content.push({
+                type: 'image',
+                mediaType: String(image.mediaType),
+                data: String(image.data),
+                ...(image.name ? { name: String(image.name) } : {}),
+              })
+            }
             const value = await ctx.sessionController.prompt({
               requestId: 'm-' + randomBytes(8).toString('hex'),
               sessionId: body.sessionId,
@@ -475,22 +516,9 @@ export function registerMobile(ctx, config) {
             const sessionId = url.searchParams.get('sessionId') || ''
             const attachmentId = url.searchParams.get('id') || ''
             if (!sessionId || !attachmentId) return sendJson(res, 400, { ok: false, error: '缺少参数' })
-            let stored = null
-            try {
-              const sessions = (ctx.get ? ctx.get('sessions') : null) || ctx.sessions
-              const session = sessions && typeof sessions.get === 'function' ? sessions.get(sessionId) : null
-              if (session && typeof session.readAttachment === 'function') {
-                stored = await session.readAttachment(attachmentId)
-              }
-            } catch {
-              stored = null
-            }
-            if (!stored || !stored.data) return sendJson(res, 404, { ok: false, error: '找不到图片' })
-            return sendJson(res, 200, {
-              ok: true,
-              mediaType: stored.mediaType || 'image/jpeg',
-              data: Buffer.from(stored.data).toString('base64'),
-            })
+            const local = await readLocalImage(chatDir, attachmentId)
+            if (!local) return sendJson(res, 404, { ok: false, error: '找不到图片' })
+            return sendJson(res, 200, { ok: true, mediaType: local.mediaType, data: local.data.toString('base64') })
           }
 
           // 会话菜单：重命名 / 置顶 / 取消置顶 / 删除(归档) / 取消归档

@@ -478,7 +478,11 @@ async function sendMessage() {
       return
     }
     const id = await ensureSession()
-    const images = state.pendingImages.map((item) => item.attachment)
+    const images = state.pendingImages.map((item) => ({
+      mediaType: item.mediaType,
+      data: item.data,
+      ...(item.name ? { name: item.name } : {}),
+    }))
     await api('send', { method: 'POST', body: { sessionId: id, text, images } })
     state.pendingImages = []
     renderPending()
@@ -707,15 +711,18 @@ async function pickImages(input) {
     if (file.size > 10 * 1024 * 1024) { toast('图片超过 10MB，已跳过'); continue }
     try {
       const dataUrl = await readAsDataUrl(file)
-      const base64 = dataUrl.slice(dataUrl.indexOf(',') + 1)
-      const result = await api('upload', {
-        method: 'POST',
-        body: { mediaType: file.type || 'image/jpeg', name: file.name, data: base64 },
+      const mediaType = file.type === 'image/png' || file.type === 'image/webp' || file.type === 'image/gif'
+        ? file.type
+        : 'image/jpeg'
+      state.pendingImages.push({
+        mediaType,
+        data: dataUrl.slice(dataUrl.indexOf(',') + 1),
+        name: file.name,
+        dataUrl,
       })
-      state.pendingImages.push({ attachment: result.attachment, dataUrl })
       renderPending()
     } catch (error) {
-      toast('上传失败：' + error.message)
+      toast('读取图片失败：' + error.message)
     }
   }
 }
