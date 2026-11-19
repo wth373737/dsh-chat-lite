@@ -274,7 +274,10 @@ function renderMessages() {
   const hasAny = state.messages.length > 0
   el.empty.hidden = hasAny || Boolean(state.current)
   el.messages.hidden = !hasAny
-  el.messages.innerHTML = state.messages.map(messageHtml).join('')
+  const typing = state.running
+    ? '<div class="msg assistant"><div class="typing"><span></span><span></span><span></span></div></div>'
+    : ''
+  el.messages.innerHTML = state.messages.map(messageHtml).join('') + typing
   if (hasAny) {
     requestAnimationFrame(() => {
       el.messages.scrollTop = el.messages.scrollHeight
@@ -318,12 +321,18 @@ async function startFollow(sessionId) {
       state.messages = buildMessages(state.records)
       renderMessages()
     } else if (frame.type === 'event') {
+      if (frame.event && frame.event.type === 'assistant/message') {
+        state.running = false
+        renderSend()
+      }
       const next = buildMessages([{ event: frame.event }])
       if (next.length) {
         state.messages = state.messages.concat(next)
         renderMessages()
       }
     } else if (frame.type === 'error') {
+      state.running = false
+      renderSend()
       toast('连接异常：' + (frame.message || ''))
     }
   }
