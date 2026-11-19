@@ -1,6 +1,8 @@
-fix(mobile): 文件改用 fileUploads 上传收据（receiptId）而非持久引用
+feat(mobile): 文本类文件内容内联发送（模型可读）
 
-- 官方路径是「按会话上传 → 拿 receiptId → prompt 里带 {type:'file', receiptId}」，
-  直接给持久引用会被拒（File was not uploaded for this session）
-- 宿主 /api/upload-file 改为 uploadStream({sessionId, data, name})，返回 receiptId + file
-- 前端改为发送时才上传（此时会话已存在），文件内容只暂存在内存
+实测结论：file 类型的 part 能提交成功，但当前模型读不到文件内容
+（回复「我这边没法打开那个附件」）。因此改为：
+- 文本类扩展名（txt/md/json/csv/代码等，<200KB）直接把内容拼进正文的代码块
+- 其他二进制仍走 fileUploads 收据上传，保留附件记录
+
+这样常见文本文件真正可用，同时不虚构二进制能被读取。

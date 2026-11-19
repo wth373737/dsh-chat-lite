@@ -848,8 +848,9 @@ async function sendMessage() {
     // 乐观显示：不等服务端回显，先把这条放到界面上
     state.messages = state.messages.concat([{
       role: 'user',
-      text,
+      text: outgoing,
       images: state.pendingImages.map((item) => ({ localUrl: item.dataUrl })),
+      files: state.pendingFiles.map((item) => ({ name: item.name })),
       local: true,
     }])
     state.pendingImages = []
@@ -859,8 +860,16 @@ async function sendMessage() {
     state.liveThinking = ''
     renderMessages()
     renderSend()
+    // 文件处理：文本类直接把内容附在正文里（模型真能读到）；
+    // 二进制仍作为附件上传，但只记录引用。
     const fileReceipts = []
+    let inlineText = ''
     for (const item of state.pendingFiles) {
+      const text = decodeTextFile(item.data, item.name)
+      if (text !== null) {
+        inlineText += '\n\n[附件 ' + item.name + ']\n```\n' + text + '\n```'
+        continue
+      }
       const uploaded = await api('upload-file', {
         method: 'POST',
         body: { sessionId: id, name: item.name, data: item.data },
@@ -868,7 +877,8 @@ async function sendMessage() {
       fileReceipts.push({ receiptId: uploaded.receiptId })
     }
     const files = fileReceipts
-    await api('send', { method: 'POST', body: { sessionId: id, text, images, files } })
+    const outgoing = text + inlineText
+    await api('send', { method: 'POST', body: { sessionId: id, text: outgoing, images, files } })
     state.pendingFiles = []
     // 轮询兜底：即使 SSE 不工作，也能看到回复
     pollForReply(id, baseline)
@@ -1293,6 +1303,20 @@ function compressImage(dataUrl, maxSide = 1600, quality = 0.85) {
     image.onerror = () => resolve({ dataUrl, mediaType: 'image/jpeg' })
     image.src = dataUrl
   })
+}
+
+/** 尝试把 base64 内容按 UTF-8 文本解码；二进制或过大则返回 null。 */
+function decodeTextFile(base64, name) {
+  const TEXT_EXT = /\.(txt|md|markdown|json|jsonl|csv|tsv|log|js|mjs|cjs|ts|tsx|jsx|py|java|c|h|cpp|cs|go|rs|rb|php|sh|ps1|html|htm|css|scss|xml|yml|yaml|ini|toml|sql)$/i
+  if (!TEXT_EXT.test(String(name || ''))) return null
+  try {
+    const bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0))
+    if (bytes.length > 200 * 1024) return null
+    const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+    return text.replace(/\u0000/g, '').slice(0, 60000)
+  } catch {
+    return null
+  }
 }
 
 function readAsDataUrl(file) {
