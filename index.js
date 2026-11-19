@@ -16,10 +16,12 @@ import { statSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 
+import { registerMobile } from './mobile.js'
+
 export const name = 'chat-lite'
 
 // 只用 webServer 注册路由；不注入 tools，也不注册任何工具。
-export const inject = ['webServer', 'agents', 'sessionPersistence']
+export const inject = ['webServer', 'agents', 'sessionPersistence', 'sessionController', 'workspaceRegistry']
 
 const ROUTE = '/chat-lite/api'
 const PATCH_PATH = fileURLToPath(new URL('./cordis.patch.yml', import.meta.url))
@@ -629,6 +631,9 @@ export function apply(ctx, config = {}) {
   const chatDir = config.chatDir || ''
   // 会话日志根目录：默认 $DSH_HOME/.dsh/sessions，可用 config.sessionsRoot 覆盖
   const sessionsRoot = resolveSessionsRoot(config, process.env)
+
+  // 移动端独立页面（自带认证；重启后 Cookie 仍有效，不需要重新扫码）
+  registerMobile(ctx, { chatDir })
 
   // 定时归档：只扫 chatDir 下的会话，只在 <chatDir>/.chat-lite/ 里写文件。
   // 客户端也会在打开历史页时主动 POST 一次，保证"聊完就能看到"。

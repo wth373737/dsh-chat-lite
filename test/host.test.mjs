@@ -22,6 +22,8 @@ import {
   readEventsFromFile,
 } from '../index.js'
 
+import { MobileAuth } from '../mobile.js'
+
 const FIXTURE = `# 补丁
 - insert:
     - id: preset-x
@@ -224,4 +226,31 @@ test('writeArchiveFiles 端到端：写会话文件、索引、全文分块，�
     readEvents: (target) => readEventsFromFile(target.file),
   })
   assert.equal(again.changed, 0, '同一 revision 不应重复写')
+})
+test('MobileAuth：令牌可换设备 Cookie，重启后仍有效，撤销后失效', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'chat-lite-auth-'))
+  const chatDir = path.join(root, 'chat')
+
+  const auth = new MobileAuth(chatDir)
+  const token = await auth.token()
+  assert.equal(typeof token, 'string')
+  assert.ok(token.length >= 32, '令牌应当足够长')
+
+  // 令牌错误 → 拒绝
+  assert.equal(await auth.redeem('wrong-token', 'x'), null)
+
+  const granted = await auth.redeem(token, '测试手机')
+  assert.ok(granted && granted.cookie.includes('.'), '应返回设备 Cookie')
+  assert.ok(await auth.verify(granted.cookie), 'Cookie 校验通过')
+  assert.equal(await auth.verify('deadbeef.wrong'), null)
+
+  // 模拟重启：新实例读同一个 auth.json，令牌与设备都应还在
+  const restarted = new MobileAuth(chatDir)
+  assert.equal(await restarted.token(), token, '重启后令牌不变')
+  assert.ok(await restarted.verify(granted.cookie), '重启后设备 Cookie 仍有效')
+
+  // 撤销：换新令牌，旧 Cookie 失效
+  const fresh = await restarted.revokeAll()
+  assert.notEqual(fresh, token)
+  assert.equal(await restarted.verify(granted.cookie), null)
 })
