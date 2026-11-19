@@ -19,6 +19,14 @@ const el = {
   attach: $('attach'),
   attachSheet: $('attach-sheet'),
   toast: $('toast'),
+  pending: $('pending'),
+  fileCamera: $('file-camera'),
+  fileAlbum: $('file-album'),
+  offlineBanner: $('offline-banner'),
+  pairing: $('pairing'),
+  pairingInput: $('pairing-input'),
+  pairingSubmit: $('pairing-submit'),
+  pairingMsg: $('pairing-msg'),
 }
 
 const state = {

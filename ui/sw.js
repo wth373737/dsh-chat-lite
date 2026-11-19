@@ -1,7 +1,7 @@
 // dsh-chat-lite Service Worker：离线壳 + 最近 3 天数据缓存
 'use strict'
 
-const VERSION = 'v1'
+const VERSION = 'v2'
 const SHELL_CACHE = 'chat-lite-shell-' + VERSION
 const API_CACHE = 'chat-lite-api-' + VERSION
 const MAX_AGE_MS = 3 * 24 * 60 * 60 * 1000 // 最近 3 天
@@ -100,20 +100,18 @@ self.addEventListener('fetch', (event) => {
     return
   }
 
-  // 壳：缓存优先，后台更新
+  // 壳：网络优先（避免旧前端卡在缓存里），失败回落缓存
   event.respondWith(
     (async () => {
       const cache = await caches.open(SHELL_CACHE)
-      const hit = await cache.match(request, { ignoreSearch: true })
-      const network = fetch(request)
-        .then((response) => {
-          if (response.ok) cache.put(request, response.clone())
-          return response
-        })
-        .catch(() => null)
-      if (hit) return hit
-      const fresh = await network
-      if (fresh) return fresh
+      try {
+        const response = await fetch(request)
+        if (response.ok) await cache.put(request, response.clone())
+        return response
+      } catch {
+        const hit = await cache.match(request, { ignoreSearch: true })
+        if (hit) return hit
+      }
       // 导航请求兜底到首页
       const shell = await cache.match('ui/index.html', { ignoreSearch: true })
       return shell || new Response('离线', { status: 503, headers: { 'content-type': 'text/plain; charset=utf-8' } })
