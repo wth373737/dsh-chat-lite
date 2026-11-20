@@ -31,7 +31,7 @@
 // 渲染仍然全部交给官方会话视图，本插件不写对话渲染逻辑。
 
 window.__ModuleLoader__.load({
-  id: '@local/dsh-chat-lite',
+  id: 'dsh-chat-lite',
   factory(require) {
     const React = require('react')
     const h = React.createElement
