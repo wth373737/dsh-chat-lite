@@ -131,7 +131,8 @@ body {
 
 .messages {
   flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch;
-  padding: 8px 14px 12px; scroll-behavior: auto;
+  /* 左右留白对齐官方排版：14px → 24px，读长段落更松快 */
+  padding: 10px 24px 14px; scroll-behavior: auto;
 }
 .empty {
   flex: 1; display: flex; flex-direction: column;
