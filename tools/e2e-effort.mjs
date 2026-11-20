@@ -20,9 +20,10 @@ console.log('改之前的全局默认:', JSON.stringify(before.defaultSelection)
 const created = await call('/new', { effort: 'high' })
 console.log('新建会话:', created.sessionId, '（已按 high 应用）')
 
-// 模拟手机端把档位改成 low
-await call('/effort', { sessionId: created.sessionId, effort: 'low' })
-console.log('已把该会话档位改为 low')
+// 模拟手机端改成与默认不同的档位（默认 high 时改成 low）
+const target = before.defaultSelection && before.defaultSelection.reasoningEffort === 'low' ? 'high' : 'low'
+await call('/effort', { sessionId: created.sessionId, effort: target })
+console.log('已把该会话档位改为 ' + target)
 
 await new Promise((resolve) => setTimeout(resolve, 300))
 
