@@ -469,18 +469,32 @@ async function applySessionEffort(ctx, sessionId, effort) {
     ...(effort ? { reasoningEffort: String(effort) } : {}),
   })
 
-  // selectModel 内部是 void saveSelection(...)，等它落地再改回去
+  // selectModel 内部是 void saveSelection(...)，必须先等它落地，再恢复默认
   if (defaults && previous) {
-    await new Promise((resolve) => setTimeout(resolve, 60))
-    for (let attempt = 0; attempt < 3; attempt += 1) {
+    const same = (a, b) =>
+      Boolean(a) && Boolean(b) &&
+      String(a.provider || '') === String(b.provider || '') &&
+      String(a.model || '') === String(b.model || '') &&
+      String(a.reasoningEffort || '') === String(b.reasoningEffort || '')
+    const selectedEffort = effort ? String(effort) : String(previous.reasoningEffort || '')
+
+    // 1) 等内部保存落地（currentSelection 变成新档位）
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 25))
       const now = defaults.currentSelection()
-      if (now.reasoningEffort === previous.reasoningEffort && now.model === previous.model && now.provider === previous.provider) break
+      if (now && String(now.reasoningEffort || '') === selectedEffort && String(now.model || '') === model) break
+    }
+
+    // 2) 恢复原值，并校验确实回到原值
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const now = defaults.currentSelection()
+      if (same(now, previous)) break
       try {
         await defaults.saveSelection(previous)
       } catch {
         // 忽略：恢复失败不影响会话本身的档位
       }
-      await new Promise((resolve) => setTimeout(resolve, 40))
+      await new Promise((resolve) => setTimeout(resolve, 30))
     }
   }
 
