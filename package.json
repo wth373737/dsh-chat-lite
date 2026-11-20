@@ -22,7 +22,7 @@
   "homepage": "https://github.com/wth373737/dsh-chat-lite#readme",
   "scripts": {
     "import": "node tools/build-history.mjs",
-    "check": "node --check index.js && node --check client.js && node --check mobile.js && node --check ui/app.js && node --check ui/sw.js && node tools/check-ui.mjs",
+    "check": "node --check index.js && node --check client.js && node --check mobile.js && node --check ui/app.js && node --check ui/sw.js && node tools/check-ui.mjs && node tools/check-client-id.mjs",
     "test": "node --test test/host.test.mjs"
   },
   "exports": {
