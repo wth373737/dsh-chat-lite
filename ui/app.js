@@ -698,7 +698,7 @@ async function continueFromHistory() {
     .join('\n\n')
     .slice(0, 20000)
   try {
-    const created = await api('new', { method: 'POST', body: {} })
+    const created = await api('new', { method: 'POST', body: { effort: state.effort } })
     showDialog({ title: '已新建会话', text: '历史内容会作为第一条消息发送，之后可以继续聊。', confirm: '继续', mode: 'confirm' })
     const prompt = '以下是我之前的一段对话记录，请据此了解上下文，之后我们继续聊：\n\n' + transcript
     await api('send', { method: 'POST', body: { sessionId: created.sessionId, text: prompt } })
@@ -839,7 +839,7 @@ async function sendMessage() {
       state.editing = null
       const result = await api('fork', {
         method: 'POST',
-        body: { sessionId: state.current.id, atSeq: editing.atSeq, text },
+        body: { sessionId: state.current.id, atSeq: editing.atSeq, text, effort: state.effort },
       })
       await loadList()
       await openSession(result.sessionId)
@@ -1236,7 +1236,7 @@ el.messages.addEventListener('click', async (event) => {
 /** 分叉并在新会话里继续（可选立刻发一条）。 */
 async function forkAndOpen(atSeq, text) {
   if (!state.current) return toast('当前没有会话')
-  const body = { sessionId: state.current.id }
+  const body = { sessionId: state.current.id, effort: state.effort }
   if (atSeq !== undefined) body.atSeq = atSeq
   if (text) body.text = text
   const result = await api('fork', { method: 'POST', body })
@@ -1497,10 +1497,25 @@ async function openSettings() {
     const status = await api('status')
     el.settingDevice.textContent = (status.device && status.device.label) || (status.device && status.device.id) || '—'
     el.settingDevices.textContent = String(status.devices || 0) + ' 台'
-    el.settingUrls.textContent = (status.urls || []).join('\n')
+    state.urls = status.urls || []
+    renderSettingUrls()
   } catch (error) {
     el.settingDevice.textContent = '读取失败'
     el.settingUrls.textContent = String(error.message || error)
+  }
+}
+
+/** 地址默认只显示当前这条，展开后看全部。 */
+function renderSettingUrls() {
+  const urls = state.urls || []
+  if (!urls.length) {
+    el.settingUrls.textContent = '—'
+    return
+  }
+  const shown = state.urlsExpanded ? urls : urls.slice(0, 1)
+  el.settingUrls.textContent = shown.join('\n')
+  if (urls.length > 1) {
+    el.settingUrls.textContent += (state.urlsExpanded ? '\n（点一下收起）' : '\n（共 ' + urls.length + ' 条，点一下展开）')
   }
 }
 
@@ -1558,6 +1573,11 @@ async function submitPairing() {
 
 
 $('settings-close').addEventListener('click', closeSettings)
+el.settingUrls.addEventListener('click', () => {
+  state.urlsExpanded = !state.urlsExpanded
+  renderSettingUrls()
+})
+
 el.settingsPanel.addEventListener('click', (event) => {
   if (event.target === el.settingsPanel) closeSettings()
 })
@@ -1568,6 +1588,23 @@ $('settings-pair').addEventListener('click', () => {
   showPairing('粘贴新的配对链接即可换绑这台设备')
 })
 $('settings-clear').addEventListener('click', hardReload)
+$('settings-prune').addEventListener('click', async () => {
+  const ok = await showDialog({
+    title: '清理其它设备？',
+    text: '只保留当前这台设备的配对，其它设备需要重新配对才能继续使用。',
+    confirm: '清理',
+    danger: true,
+    mode: 'confirm',
+  })
+  if (!ok) return
+  try {
+    const result = await api('prune-devices', { method: 'POST', body: {} })
+    toast('已清理 ' + result.removed + ' 台，当前设备保留')
+    openSettings()
+  } catch (error) {
+    toast('清理失败：' + error.message)
+  }
+})
 
 el.pairingSubmit.addEventListener('click', submitPairing)
 $('settings-entry').addEventListener('click', () => {
