@@ -1,5 +1,7 @@
 # dsh-chat-lite · 闲聊区
 
+[English](README.en.md) | **简体中文**
+
 给 [DeepSeek Harness](https://github.com/deepseek-ai)（DSH）加一个**日常聊天区**，并附带一个**可安装到手机的独立网页 App**。
 
 - **桌面半边**：DSH 侧栏里的闲聊面板，会话放在专属目录，不进工作区；自带自管历史库（分组、搜索、附件）。
@@ -34,11 +36,23 @@
 
 ## 安装
 
+**从 GitHub 安装（推荐）**
+
+在 DSH 里打开 **插件 → + 添加插件**，填：
+
+```text
+github:wth373737/dsh-chat-lite
+```
+
+装完**重启一次** DSH。
+
+**从本地目录安装（开发用）**
+
 ```bash
 dsh plugin --profile desktop add link:<本目录绝对路径>
 ```
 
-或在 DSH 里用 `plugin_manager` / 插件市场安装（`dsh.bundle.patch` 指向 `cordis.patch.yml`）。
+也可以在 DSH 里用 `plugin_manager` 的 `install_bundle` 指向本目录。
 
 安装后插入两行：
 
@@ -101,9 +115,11 @@ tailscale serve --bg 8787            # 把本地 8787 挂到 https://<机器名>
 | 键 | 默认 | 说明 |
 |---|---|---|
 | `enabled` | `true` | 是否启用 |
-| `chatDir` | `I:\agent\chat` | 闲聊会话目录，也是历史库所在目录 |
+| `chatDir` | `''` | 闲聊会话专用目录，同时是历史库所在目录。**留空则不做自动归档、历史库不绑定目录**，所以装好后请填一个专用目录（如 `D:\chat`） |
 | `mobilePort` | `8787` | 移动端固定端口；被占用时自动 +1 顺延 |
-| `publicBaseUrl` | `''` | 对外域名（如 `https://xxx.ts.net`）；填了配对链接就用它 |
+| `publicBaseUrl` | `''` | 对外域名（如 `https://xxx.ts.net`）；留空则按局域网地址生成配对链接 |
+
+`chatDir` 建议是一个**空目录**：闲聊会话的工作目录就是它，`<chatDir>/.chat-lite/` 里放历史库；插件只写这个子目录，不碰其它内容。
 
 ---
 

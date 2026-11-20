@@ -1,20 +1,25 @@
 {
-  "name": "@local/dsh-chat-lite",
-  "version": "0.11.0",
-  "private": true,
+  "name": "dsh-chat-lite",
+  "version": "0.12.0",
   "type": "module",
-  "description": "DSH 闲聊区：桌面面板 + 可安装到手机的独立网页 App（历史库、全文搜索、文档读取）",
+  "description": "A chat area for DeepSeek Harness: a desktop sidebar panel plus a phone-installable web app, with a self-managed history library, full-text search and document text extraction.",
   "keywords": [
     "dsh",
+    "dsh-plugin",
     "cordis-plugin",
     "chat",
-    "deepseek-harness"
+    "deepseek-harness",
+    "pwa"
   ],
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/wth373737/dsh-chat-lite.git"
   },
+  "bugs": {
+    "url": "https://github.com/wth373737/dsh-chat-lite/issues"
+  },
+  "homepage": "https://github.com/wth373737/dsh-chat-lite#readme",
   "scripts": {
     "import": "node tools/build-history.mjs",
     "check": "node --check index.js && node --check client.js && node --check mobile.js && node --check ui/app.js && node --check ui/sw.js && node tools/check-ui.mjs",
