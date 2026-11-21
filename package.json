@@ -1,6 +1,6 @@
 {
   "name": "dsh-chat-lite",
-  "version": "0.12.0",
+  "version": "0.11.1",
   "type": "module",
   "description": "A chat area for DeepSeek Harness: a desktop sidebar panel plus a phone-installable web app, with a self-managed history library, full-text search and document text extraction.",
   "keywords": [

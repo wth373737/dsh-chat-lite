@@ -1,7 +1,7 @@
 // dsh-chat-lite 移动端前端（无框架）
 'use strict'
 
-const BUILD = '2025-11-19.14'
+const BUILD = '2025-11-21.01'
 // 运行期错误：底部小条，可关闭，绝不遮挡界面
 function showErrorBar(text) {
   let bar = document.getElementById('error-bar')
@@ -988,8 +988,42 @@ function autoGrow() {
   el.input.style.height = Math.min(140, el.input.scrollHeight) + 'px'
 }
 
+// 误触防护：滑动或滚动结束时浏览器仍可能派发 click，
+// 用一个短暂的屏蔽窗口把这类「手势残留」挡掉。
+const gestureGuard = { until: 0 }
+let touchOrigin = null
+
+function markGesture() {
+  gestureGuard.until = Date.now() + 300
+}
+
+document.addEventListener('touchstart', (event) => {
+  const touch = event.touches && event.touches[0]
+  touchOrigin = touch ? { x: touch.clientX, y: touch.clientY } : null
+}, { passive: true })
+
+document.addEventListener('touchmove', (event) => {
+  const touch = event.touches && event.touches[0]
+  if (!touchOrigin || !touch) return
+  const dx = Math.abs(touch.clientX - touchOrigin.x)
+  const dy = Math.abs(touch.clientY - touchOrigin.y)
+  if (dx > 12 || dy > 12) markGesture()
+}, { passive: true })
+
+document.addEventListener('touchend', () => { touchOrigin = null }, { passive: true })
+el.messages.addEventListener('scroll', markGesture, { passive: true })
+
+/** 这次点击是不是手势残留（滑动/刚滚动完）？ */
+function isGestureResidue() {
+  return Date.now() < gestureGuard.until
+}
+
 el.input.addEventListener('input', autoGrow)
-el.send.addEventListener('click', () => (state.running ? stopMessage() : sendMessage()))
+el.send.addEventListener('click', () => {
+    if (isGestureResidue()) return // 滑动/滚动刚结束，忽略这次误触
+    if (state.running) stopMessage()
+    else sendMessage()
+  })
 el.input.addEventListener('keydown', (event) => {
   if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
     event.preventDefault()
@@ -1029,19 +1063,6 @@ async function hardReload() {
   }
   location.replace(location.pathname + '?fresh=' + Date.now())
 }
-
-// 消息区下拉刷新（页面本身不可滚动，所以自己实现）
-let pullStart = 0
-el.messages.addEventListener('touchstart', (event) => {
-  pullStart = el.messages.scrollTop <= 0 ? event.touches[0].clientY : 0
-}, { passive: true })
-el.messages.addEventListener('touchmove', (event) => {
-  if (!pullStart) return
-  if (event.touches[0].clientY - pullStart > 90) {
-    pullStart = 0
-    location.reload()
-  }
-}, { passive: true })
 
 // SW 更新后自动接管一次，避免"改了看不到"
 let reloading = false
@@ -1264,7 +1285,10 @@ document.addEventListener('click', (event) => {
 })
 
 el.webChip.addEventListener('click', toggleWeb)
-el.attach.addEventListener('click', () => { el.attachSheet.hidden = !el.attachSheet.hidden })
+el.attach.addEventListener('click', () => {
+    if (isGestureResidue()) return
+    el.attachSheet.hidden = !el.attachSheet.hidden
+  })
 el.attachSheet.addEventListener('click', (event) => {
   const button = event.target.closest('[data-kind]')
   if (!button || button.disabled) return
