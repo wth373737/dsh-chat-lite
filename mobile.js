@@ -1226,7 +1226,11 @@ export function registerMobile(ctx, config) {
                 abort.signal,
               )
               for await (const frame of stream) {
-                res.write('data: ' + JSON.stringify(frame) + '\n\n')
+                // 快照按 page 的口径瘦身：长会话原始事件可达数百 KB，手机上解析即卡顿
+                const payload = frame && frame.type === 'snapshot' && Array.isArray(frame.records)
+                  ? { ...frame, records: slimRecords(frame.records) }
+                  : frame
+                res.write('data: ' + JSON.stringify(payload) + '\n\n')
               }
             } catch (error) {
               res.write('data: ' + JSON.stringify({ type: 'error', message: String((error && error.message) || error) }) + '\n\n')

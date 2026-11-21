@@ -1,7 +1,7 @@
 // dsh-chat-lite 移动端前端（无框架）
 'use strict'
 
-const BUILD = '2025-11-21.01'
+const BUILD = '2025-11-21.02'
 // 运行期错误：底部小条，可关闭，绝不遮挡界面
 function showErrorBar(text) {
   let bar = document.getElementById('error-bar')
@@ -102,6 +102,7 @@ const state = {
   editing: null,   // { atSeq, text } 修改用户消息时使用
   liveText: '',
   liveThinking: '',
+  sseLive: false,
   hasMore: false,
   readOnly: false,        // 历史记录只读
   scope: 'title',         // 搜索范围：title | full
@@ -567,20 +568,13 @@ function renderMessages(keepScroll) {
   const hasAny = state.messages.length > 0
   el.empty.hidden = hasAny || Boolean(state.current)
   el.messages.hidden = !hasAny
-  const thinkingLive = state.liveThinking
-    ? '<div class="thinking-body live">' + escapeHtml(state.liveThinking) + '</div>'
-    : ''
-  const typing = state.running
-    ? state.liveText || state.liveThinking
-      ? '<div class="msg assistant">' + thinkingLive +
-        (state.liveText ? '<div class="body">' + renderMarkdown(state.liveText) + '</div>' : '') +
-        '</div>'
-      : '<div class="msg assistant"><div class="typing"><span></span><span></span><span></span></div></div>'
-    : ''
+  // 流式内容单独用一个「活动气泡」，不走整体重建
+  const typing = ''
   const earlier = state.hasMore && state.current
     ? '<div class="load-earlier"><button type="button" id="load-earlier">加载更早的消息</button></div>'
     : ''
   el.messages.innerHTML = earlier + state.messages.map(messageHtml).join('') + typing
+  if (state.running) paintLive()
   if (hasAny) {
     requestAnimationFrame(() => {
       if (keepScroll) {
@@ -589,6 +583,70 @@ function renderMessages(keepScroll) {
         el.messages.scrollTop = el.messages.scrollHeight
       }
     })
+  }
+}
+
+/** 取（或创建）流式活动气泡。 */
+function ensureLiveBubble() {
+  if (el.liveBubble && el.liveBubble.parentNode === el.messages) return el.liveBubble
+  const node = document.createElement('div')
+  node.className = 'msg assistant live'
+  node.innerHTML =
+    '<button class="thinking-toggle" hidden>▸ 思考</button>' +
+    '<div class="thinking-body live" hidden></div>' +
+    '<div class="body live-body"></div>'
+  el.messages.appendChild(node)
+  el.liveBubble = node
+  return node
+}
+
+/** 把累积的流式文本画到活动气泡上（不重建整表）。 */
+function paintLive() {
+  const text = state.liveText || ''
+  const thinking = state.liveThinking || ''
+  if (!text && !thinking) return
+  const node = ensureLiveBubble()
+  const toggle = node.querySelector('.thinking-toggle')
+  const thinkBody = node.querySelector('.thinking-body')
+  const body = node.querySelector('.live-body')
+  thinkBody.hidden = !thinking
+  thinkBody.textContent = thinking
+  toggle.hidden = !thinking
+  toggle.textContent = (thinkBody.dataset.open === '1' ? '▾' : '▸') + ' 思考'
+  body.textContent = text
+  const nearBottom = el.messages.scrollHeight - el.messages.scrollTop - el.messages.clientHeight < 120
+  if (nearBottom) el.messages.scrollTop = el.messages.scrollHeight
+}
+
+/** 流式增量节流：最多每 60ms 画一次。 */
+function schedulePaintLive() {
+  if (schedulePaintLive.timer) return
+  schedulePaintLive.timer = setTimeout(() => {
+    schedulePaintLive.timer = 0
+    paintLive()
+  }, 60)
+}
+
+/** 清掉活动气泡（生成结束或切换会话时）。 */
+function clearLive() {
+  if (el.liveBubble) {
+    el.liveBubble.remove()
+    el.liveBubble = null
+  }
+}
+
+/** 生成结束后拉一次完整消息，保证与增量拼接的结果一致。 */
+async function refreshPageOnce(sessionId) {
+  try {
+    const data = await api('page?sessionId=' + encodeURIComponent(sessionId) + '&max=60')
+    if (!state.current || state.current.id !== sessionId) return
+    state.records = data.records || []
+    state.messages = buildMessages(state.records)
+    state.hasMore = Boolean(data.hasMore)
+    state.earliestSeq = state.records.length ? state.records[0].event.seq : 0
+    renderMessages()
+  } catch {
+    // 忽略：下一次轮询/重连会补上
   }
 }
 
@@ -627,6 +685,9 @@ async function openSession(id) {
   setTitle(session ? session.title : '对话')
   state.messages = []
   state.records = []
+  state.liveText = ''
+  state.liveThinking = ''
+  clearLive()
   try {
     const data = await api('page?sessionId=' + encodeURIComponent(id) + '&max=40')
     state.records = data.records || []
@@ -724,6 +785,7 @@ async function startFollow(sessionId) {
       return
     }
     if (frame.type === 'snapshot') {
+      state.sseLive = true
       state.records = frame.records || []
       state.messages = buildMessages(state.records)
       renderMessages()
@@ -732,7 +794,10 @@ async function startFollow(sessionId) {
         state.running = false
         state.liveText = ''
         state.liveThinking = ''
+        clearLive()
         renderSend()
+        // 完成后一次性对齐完整消息
+        void refreshPageOnce(sessionId)
       }
       const next = buildMessages([{ event: frame.event }])
       if (next.length) {
@@ -747,7 +812,7 @@ async function startFollow(sessionId) {
       if (delta.text || delta.reasoning) {
         if (delta.text) state.liveText += delta.text
         if (delta.reasoning) state.liveThinking += delta.reasoning
-        renderMessages()
+        schedulePaintLive()
       }
     } else if (frame.type === 'error') {
       state.running = false
@@ -756,6 +821,7 @@ async function startFollow(sessionId) {
     }
   }
   source.onerror = () => {
+    state.sseLive = false
     setConn(false)
     // 断线后 3 秒重连（仍是当前会话才重连，避免切走后还在后台拉流）
     clearTimeout(startFollow.timer)
@@ -774,8 +840,10 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 async function pollForReply(sessionId, baselineAssistants) {
   const deadline = Date.now() + 5 * 60 * 1000
   while (Date.now() < deadline) {
-    await sleep(1500)
+    // SSE 健康时只做低频兜底，避免每 1.5s 整页拉取 + 整表重绘
+    await sleep(state.sseLive ? 4000 : 1500)
     if (!state.current || state.current.id !== sessionId) return
+    if (!state.running) return
     try {
       const data = await api('page?sessionId=' + encodeURIComponent(sessionId) + '&max=60')
       const next = buildMessages(data.records)
