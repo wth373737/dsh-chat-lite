@@ -1,7 +1,7 @@
 // dsh-chat-lite 移动端前端（无框架）
 'use strict'
 
-const BUILD = '2025-11-21.02'
+const BUILD = '2025-11-21.03'
 // 运行期错误：底部小条，可关闭，绝不遮挡界面
 function showErrorBar(text) {
   let bar = document.getElementById('error-bar')
@@ -1093,7 +1093,9 @@ el.send.addEventListener('click', () => {
     else sendMessage()
   })
 el.input.addEventListener('keydown', (event) => {
-  if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+  // 只有 Ctrl/Cmd + Enter 才发送（桌面端方便用）；
+  // 普通 Enter 就是换行——手机键盘的「发送/回车」键因此不会误发。
+  if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && !event.isComposing) {
     event.preventDefault()
     sendMessage()
   }
